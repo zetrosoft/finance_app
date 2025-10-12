@@ -1,2 +1,38 @@
+<<<<<<< HEAD
 # finanxap
 Applikasi Custom Frape ERPNext untuk proses pembuatan Purchase Invoice dari PO berdasarkan Payment Schedule
+=======
+### Finance App
+
+Custom Logic For Finance and Payment
+
+### Installation
+
+You can install this app using the [bench](https://github.com/frappe/bench) CLI:
+
+```bash
+cd $PATH_TO_YOUR_BENCH
+bench get-app $URL_OF_THIS_REPO --branch develop
+bench install-app finance_app
+```
+
+### Contributing
+
+This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
+
+```bash
+cd apps/finance_app
+pre-commit install
+```
+
+Pre-commit is configured to use the following tools for checking and formatting your code:
+
+- ruff
+- eslint
+- prettier
+- pyupgrade
+
+### License
+
+mit
+>>>>>>> c53c91c (feat: Initialize App)
