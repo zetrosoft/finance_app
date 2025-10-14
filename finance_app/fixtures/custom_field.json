@@ -1,0 +1,109 @@
+[
+    {
+        "doctype": "Custom Field",
+        "name": "Payment Schedule-invoice_basis",
+        "dt": "Payment Schedule",
+        "fieldname": "invoice_basis",
+        "fieldtype": "Select",
+        "label": "Invoice Basis",
+        "options": "Percentage\nGR Quantity",
+        "insert_after": "payment_term",
+        "in_list_view": 1
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Payment Schedule-status_invoice",
+        "dt": "Payment Schedule",
+        "fieldname": "status_invoice",
+        "fieldtype": "Select",
+        "label": "Invoice Status",
+        "options": "Draft\nPending\nInvoiced\nCompleted",
+        "insert_after": "invoice_basis",
+        "in_list_view": 1,
+        "read_only": 1
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Payment Schedule-invoice_reference",
+        "dt": "Payment Schedule",
+        "fieldname": "invoice_reference",
+        "fieldtype": "Link",
+        "label": "Invoice Reference",
+        "options": "Purchase Invoice",
+        "insert_after": "status_invoice",
+        "read_only": 1
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Payment Schedule-related_delivery_id",
+        "dt": "Payment Schedule",
+        "fieldname": "related_delivery_id",
+        "fieldtype": "Link",
+        "label": "Related Goods Receipt",
+        "options": "Purchase Receipt",
+        "insert_after": "invoice_reference"
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Purchase Invoice-custom_payment_schedule",
+        "dt": "Purchase Invoice",
+        "fieldname": "custom_payment_schedule",
+        "fieldtype": "Link",
+        "label": "PO Term",
+        "options": "Payment Schedule",
+        "insert_after": "purchase_order",
+        "read_only": 1,
+        "no_copy": 1
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Purchase Invoice-custom_payment_schedule_term",
+        "dt": "Purchase Invoice",
+        "fieldname": "custom_payment_schedule_term",
+        "fieldtype": "Link",
+        "label": "Payment Schedule Term",
+        "options": "Payment Schedule",
+        "insert_after": "purchase_order",
+        "read_only": 1,
+        "no_copy": 1
+    },
+    {
+        "doctype": "DocType",
+        "name": "Billing Invoice Detail",
+        "module": "Finance App",
+        "custom": 1,
+        "istable": 1,
+        "fields": [
+            {"fieldname": "no", "label": "No", "fieldtype": "Data", "in_list_view": 0},
+            {"fieldname": "description", "label": "Description", "fieldtype": "Small Text", "in_list_view": 1},
+            {"fieldname": "po_amount", "label": "PO Amount", "fieldtype": "Currency"},
+            {"fieldname": "portion", "label": "Portion", "fieldtype": "Percent", "in_list_view": 1},
+            {"fieldname": "total_amount", "label": "Total Amount", "fieldtype": "Currency", "in_list_view": 1}
+        ],
+        "permissions": [
+            {
+                "role": "System Manager",
+                "read": 1
+            }
+        ]
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Purchase Invoice-billing_details_section",
+        "dt": "Purchase Invoice",
+        "fieldname": "billing_details_section",
+        "fieldtype": "Section Break",
+        "label": "Billing Details",
+        "insert_after": "taxes"
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Purchase Invoice-billing_invoice_details",
+        "dt": "Purchase Invoice",
+        "fieldname": "billing_invoice_details",
+        "fieldtype": "Table",
+        "options": "Billing Invoice Detail",
+        "label": "Billing Invoice Details",
+        "insert_after": "billing_details_section"
+    }
+]

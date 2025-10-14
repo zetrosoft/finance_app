@@ -1,0 +1,8 @@
+c53c91c42d4eca136b6fec52d370f4f71b89be10 c53c91c42d4eca136b6fec52d370f4f71b89be10 Bijak Technology <iswanputera@gmail.com> 1759935957 +0700	commit: Switching to develop
+c53c91c42d4eca136b6fec52d370f4f71b89be10 3f3cc5cec7615a4fc23d286f3de58562f104aaf6 Bijak Technology <iswanputera@gmail.com> 1760263770 +0700	commit: update pembuatan PI dari PO base on ToP dan GR
+3f3cc5cec7615a4fc23d286f3de58562f104aaf6 5ee65c0578f50f70abf4304f4ae74a0b058848ed Bijak Technology <iswanputera@gmail.com> 1760264470 +0700	pull develop develop (start): checkout 5ee65c0578f50f70abf4304f4ae74a0b058848ed
+5ee65c0578f50f70abf4304f4ae74a0b058848ed bcffe5d336c67df41bf0a1d2a9f298c76186ce64 Bijak Technology <iswanputera@gmail.com> 1760264495 +0700	commit: merge md
+bcffe5d336c67df41bf0a1d2a9f298c76186ce64 68c15cbee82851c63d6284e562f36a80f05c8f54 Bijak Technology <iswanputera@gmail.com> 1760264756 +0700	pull https://github.com/zetrosoft/finanxap develop: Fast-forward
+68c15cbee82851c63d6284e562f36a80f05c8f54 93d0526d930cf817c70e30423904a3e96ddd6249 Bijak Technology <iswanputera@gmail.com> 1760264809 +0700	commit: update doc file"
+93d0526d930cf817c70e30423904a3e96ddd6249 a8a5290a8bc3b5a2afc4840fe473f8216090a4b4 Bijak Technology <iswanputera@gmail.com> 1760330821 +0700	rebase (pick): update pembuatan PI dari PO base on ToP dan GR
+a8a5290a8bc3b5a2afc4840fe473f8216090a4b4 a8a5290a8bc3b5a2afc4840fe473f8216090a4b4 Bijak Technology <iswanputera@gmail.com> 1760330821 +0700	rebase (finish): returning to refs/heads/develop

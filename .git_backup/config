@@ -1,0 +1,15 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+	ignorecase = true
+	precomposeunicode = true
+[remote "develop"]
+	url = https://github.com/zetrosoft/finance_app.git
+	fetch = +refs/heads/*:refs/remotes/develop/*
+[pull]
+	rebase = true
+[branch "develop"]
+	vscode-merge-base = develop/develop
+	vscode-merge-base = develop/develop
