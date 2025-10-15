@@ -8,7 +8,8 @@
         "label": "Invoice Basis",
         "options": "Percentage\nGR Quantity",
         "insert_after": "payment_term",
-        "in_list_view": 1
+        "in_list_view": 1,
+        "columns": 2
     },
     {
         "doctype": "Custom Field",
@@ -17,10 +18,11 @@
         "fieldname": "status_invoice",
         "fieldtype": "Select",
         "label": "Invoice Status",
-        "options": "Draft\nPending\nInvoiced\nCompleted",
+        "options": "\nDraft\nPending\nInvoiced\nCompleted",
         "insert_after": "invoice_basis",
         "in_list_view": 1,
-        "read_only": 1
+        "read_only": 1,
+        "columns": 2
     },
     {
         "doctype": "Custom Field",
@@ -105,5 +107,26 @@
         "options": "Billing Invoice Detail",
         "label": "Billing Invoice Details",
         "insert_after": "billing_details_section"
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Item Group-akronim",
+        "dt": "Item Group",
+        "fieldname": "akronim",
+        "fieldtype": "Data",
+        "insert_after": "item_group_name",
+        "label": "Akronim",
+        "no_copy": 1,
+        "in_list_view": 1
+    },
+    {
+        "doctype": "Custom Field",
+        "name": "Purchase Invoice-custom_in_words_idr",
+        "dt": "Purchase Invoice",
+        "fieldname": "custom_in_words_idr",
+        "fieldtype": "Data",
+        "label": "In Words (IDR)",
+        "read_only": 1,
+        "insert_after": "in_words"
     }
 ]

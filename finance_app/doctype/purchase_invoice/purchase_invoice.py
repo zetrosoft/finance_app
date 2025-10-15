@@ -175,7 +175,7 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
                         # Periksa status_invoice saat ini dari term
                         current_term_status = frappe.db.get_value("Payment Schedule", term_id, "status_invoice")
 
-                        if not current_term_status: # Hanya update jika status_invoice masih kosong/null
+                        if not current_term_status or current_term_status == "Pending":
                             frappe.db.set_value(
                                 "Payment Schedule", # Child DocType name
                                 term_id,          # Child DocType row name
@@ -195,9 +195,6 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
         pass
 
     def before_insert(self):
-        # --- START CUSTOM LOGIC FOR ONLOAD (now in before_insert) ---
-
-        # Logika untuk memilih term pertama yang belum di-invoice secara otomatis
         if self.is_new():
             po_name = None
             if frappe.form_dict.get('doc'):
@@ -211,40 +208,38 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
                                 po_name = item.get('purchase_order')
                                 break
                 except json.JSONDecodeError as e:
-                    # If needed, add a log here for production
                     pass
 
             if po_name:
                 po_doc = frappe.get_doc("Purchase Order", po_name)
                 
-                selected_term = None
-                for term in po_doc.payment_schedule: # <--- This is where we get terms from PO
-                    if not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2: # docstatus 2 = Cancelled
-                        selected_term = term
+                selected_term_from_po = None
+                for term in po_doc.payment_schedule:
+                    if not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2:
+                        selected_term_from_po = term
                         break
                 
-                if selected_term:
-                    self.custom_payment_schedule_term = selected_term.name
-                    self.remarks = (_("Invoice untuk Term Pembayaran: {0} (ID: {1})").format(selected_term.name, selected_term.name)) + "\\n" + (self.remarks or "")
+                if selected_term_from_po:
+                    self.custom_payment_schedule_term = selected_term_from_po.name
+                    self.remarks = (_("Invoice untuk Term Pembayaran: {0} (ID: {1})".format(selected_term_from_po.name, selected_term_from_po.name)) + "\\n" + (self.remarks or ""))
 
-                    # --- CUSTOM FIELD COPYING LOGIC ---
                     for pi_term in self.payment_schedule:
-                        if pi_term.payment_term == selected_term.payment_term and pi_term.idx == selected_term.idx:
-                            pi_term.invoice_basis = selected_term.invoice_basis
-                            pi_term.status_invoice = selected_term.status_invoice
-                            pi_term.invoice_reference = selected_term.invoice_reference
-                            pi_term.related_delivery_id = selected_term.related_delivery_id
+                        if pi_term.payment_term == selected_term_from_po.payment_term and pi_term.idx == selected_term_from_po.idx:
+                            pi_term.invoice_basis = selected_term_from_po.invoice_basis
+                            pi_term.status_invoice = selected_term_from_po.status_invoice
+                            pi_term.invoice_reference = selected_term_from_po.invoice_reference
+                            pi_term.related_delivery_id = selected_term_from_po.related_delivery_id
                             break
             
 @frappe.whitelist()
-def get_billing_invoice_data(po_name, current_pi_name=None): # <-- Tambahkan parameter current_pi_name
+def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
     billing_details = []
     po_items = []
     selected_term_invoice_portion = 0
     selected_term_payment_amount = 0
     selected_term_description = ""
     has_draft_term = False
-    selected_term_name_for_client = None # Menggunakan nama yang lebih jelas
+    selected_term_name_for_client = None
 
     if not po_name:
         return {
@@ -253,63 +248,92 @@ def get_billing_invoice_data(po_name, current_pi_name=None): # <-- Tambahkan par
             "po_items": [],
             "selected_term_invoice_portion": 0,
             "selected_term_description": "",
-            "has_draft_term": False
+            "has_draft_term": False,
         }
 
     try:
+        frappe.log_error(f"DEBUG: Server received -> po_name: {po_name}, is_from_gr: {is_from_gr}", "PI Billing Debug")
         po_doc = frappe.get_doc("Purchase Order", po_name)
+
+        # --- GR Quantity Validation ---
+        if not is_from_gr:
+            for term in po_doc.payment_schedule:
+                if term.invoice_basis == 'GR Quantity':
+                    return {
+                        "validation_failed": True,
+                        "message": _("Pembuatan PI dari PO ini tidak diizinkan karena basis tagihan adalah 'GR Quantity'. Harap buat PI melalui Tanda Terima Pembelian (Purchase Receipt).")
+                    }
+        # --- End of GR Quantity Validation ---
+
         po_items = [item.as_dict() for item in po_doc.items]
 
         selected_term = None
-        for term in po_doc.payment_schedule:
-            # current_pi_name = frappe.form_dict.get('docname') # Dapatkan nama PI yang sedang dibuka
+        has_draft_term = False
 
-            if term.status_invoice == "Draft":
-                # Jika term ini adalah 'Draft' dan invoice_reference-nya adalah PI yang sedang dibuka,
-                # maka term ini adalah term yang valid untuk PI ini.
-                # Jika tidak, dan statusnya 'Draft', maka itu adalah draft yang memblokir.
-                if current_pi_name and term.invoice_reference == current_pi_name:
-                    selected_term = term
-                    break # Term ini adalah term yang sedang kita kerjakan, lanjutkan
+        if is_from_gr:
+            selected_term_invoice_portion = 100
+            selected_term_description = _("Tagihan berdasarkan Kuantitas Goods Receipt")
+            selected_term_payment_amount = 0  # Biarkan klien yang menghitung dari item GR
+            selected_term_name_for_client = None
+        else:
+            # Logika pencarian termin yang ada hanya berjalan jika bukan dari GR
+            linked_pi_names = frappe.get_all(
+                "Purchase Invoice Item",
+                filters={"purchase_order": po_name},
+                pluck="parent",
+                distinct=True
+            )
+
+            filters_existing_pis = {"name": ("in", linked_pi_names), "docstatus": ("!=", 2)}
+            if current_pi_name:
+                filters_existing_pis["name"] = ("!=", current_pi_name)
+
+            existing_active_pis_count = frappe.db.count("Purchase Invoice", filters=filters_existing_pis)
+
+            if existing_active_pis_count == 0:
+                for term in po_doc.payment_schedule:
+                    if not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2:
+                        selected_term = term
+                        break
+            else:
+                for term in po_doc.payment_schedule:
+                    if term.status_invoice == "Draft":
+                        if current_pi_name and term.invoice_reference == current_pi_name:
+                            selected_term = term
+                            break
+                        else:
+                            has_draft_term = True
+                            selected_term = term
+                            break
+                    elif not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2:
+                        selected_term = term
+                        break
+
+            if selected_term:
+                selected_term_name_for_client = selected_term.name
+                selected_term_invoice_portion = selected_term.invoice_portion
+                selected_term_description = selected_term.description
+
+                if po_doc.net_total is not None and selected_term_invoice_portion is not None:
+                    selected_term_payment_amount = flt(po_doc.net_total * (selected_term_invoice_portion / 100))
                 else:
-                    # Ini adalah term 'Draft' dari PI lain, atau PI yang sedang dibuka belum memiliki nama
-                    has_draft_term = True # Ini adalah draft yang memblokir
-                    selected_term = term # Tetap pilih term ini untuk menampilkan warning
-                    break # Found a draft term, prioritize it for blocking logic
-            elif not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2:
-                # Jika term belum memiliki invoice_reference atau invoice_reference-nya dibatalkan
-                selected_term = term
-                break # Found a pending term, use it
+                    selected_term_payment_amount = 0
 
-        if selected_term:
-            selected_term_name_for_client = selected_term.name # Menggunakan nama yang lebih jelas
-            selected_term_payment_amount = selected_term.payment_amount
-            selected_term_invoice_portion = selected_term.invoice_portion
-            selected_term_description = selected_term.description
-
-            # Check if the selected term is already linked to a PI that is not cancelled
-            # Logika ini perlu disesuaikan karena kita sudah menangani "Draft" di atas
-            # Jika selected_term.invoice_reference ada dan BUKAN PI yang sedang dibuat, dan tidak dibatalkan
-            current_pi_name = frappe.form_dict.get('docname')
-            if selected_term.invoice_reference and selected_term.invoice_reference != current_pi_name and frappe.db.get_value("Purchase Invoice", selected_term.invoice_reference, "docstatus") != 2:
-                # If the selected term is already linked to an active PI, we should not use it for a new PI
-                selected_term = None
-                selected_term_name_for_client = None
-                selected_term_payment_amount = 0
-                selected_term_invoice_portion = 0
-                selected_term_description = ""
-                has_draft_term = True # Treat as if there's a draft term to block
+                if selected_term.invoice_reference and selected_term.invoice_reference != current_pi_name and frappe.db.get_value("Purchase Invoice", selected_term.invoice_reference, "docstatus") != 2:
+                    selected_term = None
+                    selected_term_name_for_client = None
+                    selected_term_payment_amount = 0
+                    selected_term_invoice_portion = 0
+                    selected_term_description = ""
+                    has_draft_term = True
 
         total_billed_amount = frappe.db.get_value(
             "Purchase Invoice Item",
-            {
-                "purchase_order": po_name,
-                "docstatus": 1
-            },
+            {"purchase_order": po_name, "docstatus": 1},
             "sum(amount)"
         ) or 0
 
-        outstanding_amount = po_doc.grand_total - total_billed_amount
+        outstanding_amount = po_doc.net_total - total_billed_amount
 
         billing_details.append({
             "no": 1,
@@ -319,7 +343,17 @@ def get_billing_invoice_data(po_name, current_pi_name=None): # <-- Tambahkan par
             "total_amount": outstanding_amount
         })
         
-        if selected_term:
+        if is_from_gr:
+            # For GR-based invoices, the amount is the total of the items.
+            # The outstanding amount of the PO is a good representation of the current invoice value.
+            billing_details.append({
+                "no": 2,
+                "description": _("Tagihan berdasarkan Kuantitas Goods Receipt"),
+                "po_amount": None,
+                "portion": 100,
+                "total_amount": outstanding_amount
+            })
+        elif selected_term:
             billing_details.append({
                 "no": 2,
                 "description": selected_term_description,
@@ -339,85 +373,71 @@ def get_billing_invoice_data(po_name, current_pi_name=None): # <-- Tambahkan par
         "selected_term_invoice_portion": selected_term_invoice_portion,
         "selected_term_description": selected_term_description,
         "has_draft_term": has_draft_term,
-        "selected_term_idx": selected_term_name_for_client # Menggunakan nama yang lebih jelas
+        "selected_term_idx": selected_term_name_for_client
     }        
 
 
 
 @frappe.whitelist()
 def update_po_payment_term_status_on_submit(doc, method):
-    frappe.msgprint(f"update_po_payment_term_status_on_submit called for PI: {doc.name}", title="DEBUG HOOK")
     if doc.custom_payment_schedule_term and doc.items:
         po_name = doc.items[0].purchase_order
         term_id = doc.custom_payment_schedule_term
-        frappe.msgprint(f"PO Name: {po_name}, Term ID: {term_id}", title="DEBUG HOOK")
 
         if po_name and term_id:
             try:
-                # Fetch the PO document (not needed for set_value, but good for logging)
                 po = frappe.get_doc("Purchase Order", po_name)
-                frappe.msgprint(f"PO Doc fetched: {po.name}", title="DEBUG HOOK")
                 
                 term_found = False
                 for term in po.payment_schedule:
                     if term.name == term_id:
-                        # Directly update the child table row in the database
                         frappe.db.set_value(
-                            "Payment Schedule", # Child DocType name
-                            term.name,          # Child DocType row name
+                            "Payment Schedule",
+                            term.name,
                             {
                                 "status_invoice": "Invoiced",
                                 "invoice_reference": doc.name
                             }
                         )
                         term_found = True
-                        frappe.msgprint(f"Term {term.name} updated in DB. Status: Invoiced", title="DEBUG HOOK")
                         break
                 
                 if not term_found:
-                    frappe.msgprint(f"Term {term_id} not found in PO {po_name}.", title="DEBUG HOOK")
+                    frappe.log_error(f"Term {term_id} not found in PO {po_name}.", "PI Submit Error")
 
             except Exception as e:
-                frappe.msgprint(f"Error in update_po_payment_term_status_on_submit for PI {doc.name}: {e}", title="DEBUG HOOK ERROR", indicator="red")
-                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_submit for PI {doc.name}") # Keep log_error for traceback
+                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_submit for PI {doc.name}")
     else:
-        frappe.msgprint(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", title="DEBUG HOOK")
+        frappe.log_error(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", "PI Submit Skipped")
 
 @frappe.whitelist()
 def update_po_payment_term_status_on_cancel(doc, method):
-    frappe.msgprint(f"update_po_payment_term_status_on_cancel called for PI: {doc.name}", title="DEBUG HOOK")
     if doc.custom_payment_schedule_term and doc.items:
         po_name = doc.items[0].purchase_order
         term_id = doc.custom_payment_schedule_term
-        frappe.msgprint(f"PO Name: {po_name}, Term ID: {term_id}", title="DEBUG HOOK")
 
         if po_name and term_id:
             try:
-                # Fetch the PO document (not needed for set_value, but good for logging) 
                 po = frappe.get_doc("Purchase Order", po_name)
-                frappe.msgprint(f"PO Doc fetched: {po.name}", title="DEBUG HOOK")
                 
                 term_found = False
                 for term in po.payment_schedule:
                     if term.name == term_id:
-                        # Directly update the child table row in the database
                         frappe.db.set_value(
-                            "Payment Schedule", # Child DocType name
-                            term.name,          # Child DocType row name
+                            "Payment Schedule",
+                            term.name,
                             {
                                 "status_invoice": "Pending",
                                 "invoice_reference": None
                             }
                         )
                         term_found = True
-                        frappe.msgprint(f"Term {term.name} updated in DB. Status: Pending", title="DEBUG HOOK")
                         break
                 
                 if not term_found:
-                    frappe.msgprint(f"Term {term_id} not found in PO {po_name}.", title="DEBUG HOOK")
+                    frappe.log_error(f"Term {term_id} not found in PO {po_name}.", "PI Cancel Error")
 
             except Exception as e:
-                frappe.msgprint(f"Error in update_po_payment_term_status_on_cancel for PI {doc.name}: {e}", title="DEBUG HOOK ERROR", indicator="red")
-                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_cancel for PI {doc.name}") # Keep log_error for traceback
+                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_cancel for PI {doc.name}")
     else:
-        frappe.msgprint(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", title="DEBUG HOOK")
+        frappe.log_error(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", "PI Cancel Skipped")
