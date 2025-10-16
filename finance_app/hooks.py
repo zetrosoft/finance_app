@@ -7,7 +7,8 @@ app_license = "mit"
 
 override_doctype_class = {
     "Purchase Invoice": "finance_app.doctype.purchase_invoice.purchase_invoice.PurchaseInvoice",
-    "Purchase Order": "finance_app.doctype.purchase_order.purchase_order.CustomPurchaseOrder"
+    "Purchase Order": "finance_app.doctype.purchase_order.purchase_order.CustomPurchaseOrder",
+    "Payment Entry": "finance_app.doctype.payment_entry.custom_payment_entry.CustomPaymentEntry"
 }
 
 fixtures = ["Custom Field"]
@@ -40,4 +41,4 @@ patches = ["finance_app.patches.update_payment_schedule_columns.execute"]
 # # include js in doctype views
 # include js in doctype views
 # doctype_js = {"Purchase Invoice" : "/assets/finance_app/js/purchase_invoice_client.js"}
-app_include_js = "/assets/finance_app/js/purchase_invoice_client.js"
+app_include_js = ["/assets/finance_app/js/purchase_invoice_client.js", "/assets/finance_app/js/payment_entry_custom.js"]

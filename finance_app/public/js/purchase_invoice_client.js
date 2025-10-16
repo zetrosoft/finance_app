@@ -62,8 +62,6 @@ function setup_get_billing_info_button(frm, po_name_arg) {
 }
 
 function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
-    console.log("DEBUG: Fetching billing data for Float-Safe Update strategy...");
-    console.log("DEBUG: Sending to server -> po_name_arg:", po_name_arg, "is_from_gr_arg:", is_from_gr_arg);
     frappe.call({
         method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
         args: {
@@ -88,7 +86,6 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
 
             if (r.message) {
                 let data = r.message;
-                console.log("DEBUG: Server data received:", data);
 
                 if (data.has_draft_term) {
                     frappe.msgprint({
@@ -132,7 +129,6 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                                 // *** THE FIX: Compare with tolerance to avoid float precision issues ***
                                 if (!areFloatsEqual(pi_item.qty, new_qty)) {
                                     changes_made = true;
-                                    console.log(`DEBUG: Updating item ${pi_item.item_code}. Qty changing from ${pi_item.qty} to ${new_qty}`);
                                     frappe.model.set_value(pi_item.doctype, pi_item.name, 'qty', new_qty);
                                 }
                             }
@@ -141,9 +137,6 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
 
                     if (changes_made) {
                         frm.refresh_field('items');
-                        console.log("DEBUG: 'items' field refreshed because quantities were changed.");
-                    } else {
-                        console.log("DEBUG: No quantity changes needed, skipping refresh to avoid making form dirty.");
                     }
                 }
 
@@ -163,15 +156,12 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                                         frm.add_child('billing_invoice_details', row_data);
                                     });
                                     frm.refresh_field('billing_invoice_details');                frm.set_df_property('billing_invoice_details', 'read_only', 1);
-                console.log("DEBUG: Billing details table populated and locked.");
 
                 // --- FLAG LOGIC ---
                 // Set the flag to true after the logic has run successfully once.
                 frm.custom_billing_logic_run = true;
-                console.log("DEBUG: Custom billing logic flag set to true.");
 
             } else {
-                console.error("DEBUG: Invalid or incomplete response from server:", r.message);
                 frappe.msgprint({ title: __('Error'), indicator: 'red', message: __('Could not fetch billing data from the server. Response may be missing invoice portion.') });
             }
         }

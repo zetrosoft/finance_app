@@ -171,22 +171,18 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
                 term_id = self.custom_payment_schedule_term
 
                 if po_name and term_id:
-                    try:
-                        # Periksa status_invoice saat ini dari term
-                        current_term_status = frappe.db.get_value("Payment Schedule", term_id, "status_invoice")
+                    # Periksa status_invoice saat ini dari term
+                    current_term_status = frappe.db.get_value("Payment Schedule", term_id, "status_invoice")
 
-                        if not current_term_status or current_term_status == "Pending":
-                            frappe.db.set_value(
-                                "Payment Schedule", # Child DocType name
-                                term_id,          # Child DocType row name
-                                {
-                                    "status_invoice": "Draft",
-                                    "invoice_reference": self.name
-                                }
-                            )
-                    except Exception as e:
-                        frappe.log_error(frappe.get_traceback(), f"Error updating payment schedule to Draft for PI {self.name}")
-                        frappe.msgprint(f"Error updating payment schedule to Draft for PI {self.name}: {e}", title="DEBUG HOOK ERROR", indicator="red")
+                    if not current_term_status or current_term_status == "Pending":
+                        frappe.db.set_value(
+                            "Payment Schedule", # Child DocType name
+                            term_id,          # Child DocType row name
+                            {
+                                "status_invoice": "Draft",
+                                "invoice_reference": self.name
+                            }
+                        )
 
         super().before_save() # Pastikan memanggil super().before_save() jika ada
 
@@ -252,7 +248,6 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
         }
 
     try:
-        frappe.log_error(f"DEBUG: Server received -> po_name: {po_name}, is_from_gr: {is_from_gr}", "PI Billing Debug")
         po_doc = frappe.get_doc("Purchase Order", po_name)
 
         # --- GR Quantity Validation ---
@@ -363,7 +358,6 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
             })
 
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Error in get_billing_invoice_data")
         frappe.throw(f"Error fetching billing invoice data: {e}")
 
     return {
@@ -403,12 +397,12 @@ def update_po_payment_term_status_on_submit(doc, method):
                         break
                 
                 if not term_found:
-                    frappe.log_error(f"Term {term_id} not found in PO {po_name}.", "PI Submit Error")
+                    pass
 
             except Exception as e:
-                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_submit for PI {doc.name}")
+                pass
     else:
-        frappe.log_error(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", "PI Submit Skipped")
+        pass
 
 @frappe.whitelist()
 def update_po_payment_term_status_on_cancel(doc, method):
@@ -435,9 +429,9 @@ def update_po_payment_term_status_on_cancel(doc, method):
                         break
                 
                 if not term_found:
-                    frappe.log_error(f"Term {term_id} not found in PO {po_name}.", "PI Cancel Error")
+                    pass
 
             except Exception as e:
-                frappe.log_error(frappe.get_traceback(), f"Error in update_po_payment_term_status_on_cancel for PI {doc.name}")
+                pass
     else:
-        frappe.log_error(f"Missing custom_payment_schedule_term or items for PI: {doc.name}", "PI Cancel Skipped")
+        pass
