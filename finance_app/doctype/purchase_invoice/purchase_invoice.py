@@ -2,7 +2,7 @@
 
 import frappe
 from frappe import _, throw
-from frappe.utils import flt
+from frappe.utils import flt, cint
 
 # Impor kelas PurchaseInvoice asli dari ERPNext
 from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import PurchaseInvoice as ERPNextPurchaseInvoice
@@ -251,12 +251,12 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
         po_doc = frappe.get_doc("Purchase Order", po_name)
 
         # --- GR Quantity Validation ---
-        if not is_from_gr:
+        if not cint(is_from_gr):
             for term in po_doc.payment_schedule:
                 if term.invoice_basis == 'GR Quantity':
                     return {
                         "validation_failed": True,
-                        "message": _("Pembuatan PI dari PO ini tidak diizinkan karena basis tagihan adalah 'GR Quantity'. Harap buat PI melalui Tanda Terima Pembelian (Purchase Receipt).")
+                        "message": _("PO ini baru bisa dibuatkan invoice setelah dilakukan Good Receipt dan dibuat dari Menu GR")
                     }
         # --- End of GR Quantity Validation ---
 
@@ -265,7 +265,7 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
         selected_term = None
         has_draft_term = False
 
-        if is_from_gr:
+        if cint(is_from_gr):
             selected_term_invoice_portion = 100
             selected_term_description = _("Tagihan berdasarkan Kuantitas Goods Receipt")
             selected_term_payment_amount = 0  # Biarkan klien yang menghitung dari item GR
@@ -338,7 +338,7 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
             "total_amount": outstanding_amount
         })
         
-        if is_from_gr:
+        if cint(is_from_gr):
             # For GR-based invoices, the amount is the total of the items.
             # The outstanding amount of the PO is a good representation of the current invoice value.
             billing_details.append({

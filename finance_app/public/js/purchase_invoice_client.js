@@ -101,21 +101,21 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                 if (data.selected_term_idx) {
                     frm.set_value('custom_payment_schedule_term', data.selected_term_idx);
                     frm.get_field('custom_payment_schedule_term').df.hidden = 1; // Hide after setting
-                                    } else {
-                                        // If no term is selected, only show a message if it's not a GR-based invoice.
-                                        // For GR-based invoices, having no specific term is expected.
-                                        if (!frm.is_from_gr) {
-                                            frm.get_field('custom_payment_schedule_term').df.hidden = 1;
-                                            frappe.msgprint({
-                                                title: __('Informasi'),
-                                                indicator: 'blue',
-                                                message: __('Tidak ada termin pembayaran yang tersedia untuk Purchase Order ini.')
+                } else {
+                    // If no term is selected, only show a message if it's not a GR-based invoice.
+                    // For GR-based invoices, having no specific term is expected.
+                    if (!frm.is_from_gr) {
+                        frm.get_field('custom_payment_schedule_term').df.hidden = 1;
+                        frappe.msgprint({
+                            title: __('Informasi'),
+                            indicator: 'blue',
+                            message: __('Tidak ada termin pembayaran yang tersedia untuk Purchase Order ini.')
                                                 
-                                            });
-                                            return
-                                        }
-                                        // Optionally, disable save or other actions if no term is available
-                                    }
+                            });
+                            return
+                    }
+                    // Optionally, disable save or other actions if no term is available
+                }
                 // --- FLOAT-SAFE UPDATE STRATEGY ---
                 // Only run quantity recalculation if NOT creating from a GR
                 if (!frm.is_from_gr && data.selected_term_invoice_portion !== undefined) {

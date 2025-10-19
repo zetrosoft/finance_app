@@ -38,7 +38,11 @@ patches = ["finance_app.patches.update_payment_schedule_columns.execute"]
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# # include js in doctype views
-# include js in doctype views
-# doctype_js = {"Purchase Invoice" : "/assets/finance_app/js/purchase_invoice_client.js"}
-app_include_js = ["/assets/finance_app/js/purchase_invoice_client.js", "/assets/finance_app/js/payment_entry_custom.js"]
+doctype_js = {
+    "Purchase Invoice": "public/js/purchase_invoice_client.js",
+    "Payment Entry": "public/js/payment_entry_custom.js"
+}
+# app_include_js = [
+#     "/assets/finance_app/js/purchase_invoice_client.js",
+#     "/assets/finance_app/js/payment_entry_custom.js"
+# ]
