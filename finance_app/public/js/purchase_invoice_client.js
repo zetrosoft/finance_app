@@ -110,7 +110,9 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                                                 title: __('Informasi'),
                                                 indicator: 'blue',
                                                 message: __('Tidak ada termin pembayaran yang tersedia untuk Purchase Order ini.')
+                                                
                                             });
+                                            return
                                         }
                                         // Optionally, disable save or other actions if no term is available
                                     }
