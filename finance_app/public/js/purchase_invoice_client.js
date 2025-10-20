@@ -9,11 +9,13 @@ frappe.ui.form.on('Purchase Invoice', {
     },
 
     refresh: function(frm) {
+        console.log("DEBUG: refresh - START");
         let po_name_from_items = null;
         let is_from_gr = false; // Flag to check if PI is created from GR
 
         // Logic to get PO name and check for GR link
         if (frm.doc.items && frm.doc.items.length > 0) {
+            console.log("DEBUGGING GR->PI: First item data is:", frm.doc.items[0]);
             for (let i = 0; i < frm.doc.items.length; i++) {
                 if (frm.doc.items[i].purchase_order) {
                     po_name_from_items = frm.doc.items[i].purchase_order;
@@ -26,6 +28,8 @@ frappe.ui.form.on('Purchase Invoice', {
         }
 
         frm.is_from_gr = is_from_gr;
+        console.log("DEBUG: refresh - po_name_from_items:", po_name_from_items);
+        console.log("DEBUG: refresh - frm.is_from_gr:", frm.is_from_gr);
 
         // If the PI is linked to a PO in any way (direct or via GR), run the custom logic.
         if (po_name_from_items) {
@@ -57,18 +61,20 @@ frappe.ui.form.on('Purchase Invoice', {
 function setup_get_billing_info_button(frm, po_name_arg) {
     frm.clear_custom_buttons();
     frm.add_custom_button(__('Get Billing Info'), function() {
-        fetch_and_populate_billing_data(frm, po_name_arg);
+        fetch_and_populate_billing_data(frm, po_name_arg, frm.is_from_gr);
     }, __("Billing Info"));
 }
 
 function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
-    frappe.call({
-        method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
-        args: {
-            po_name: po_name_arg,
-            current_pi_name: frm.doc.name, // <-- Tambahkan baris ini
-            is_from_gr: is_from_gr_arg
-        },
+            const args = {
+                po_name: po_name_arg,
+                is_from_gr: is_from_gr_arg
+            };
+            console.log("DEBUG: Arguments sent to server:", args);
+            frappe.call({
+                method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
+                args: args,
+    
         callback: function(r) {
             if (r.message && r.message.validation_failed) {
                 frm.disable_save();
@@ -86,6 +92,7 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
 
             if (r.message) {
                 let data = r.message;
+                console.log("DEBUG: Server response data.billing_details:", data.billing_details);
 
                 if (data.has_draft_term) {
                     frappe.msgprint({
@@ -141,23 +148,25 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                         frm.refresh_field('items');
                     }
                 }
-
-                                    // Correct the total_amount for GR-based invoice before rendering
-                                    if (frm.is_from_gr) {
-                                        data.billing_details.forEach(function(row) {
-                                            // The GR-based row has a 100% portion
-                                            if (row.portion === 100) {
-                                                row.total_amount = frm.doc.grand_total;
-                                            }
-                                        });
-                                    }
+                console.log("DEBUB:frm",frm.data)
+                // Correct the total_amount for GR-based invoice before rendering
+                if (frm.is_from_gr) {
+                    data.billing_details.forEach(function(row) {
+                    // The GR-based row has a 100% portion
+                        if (row.portion === 100) {
+                            row.total_amount = frm.doc.grand_total;
+                        }
+                    });
+                }
                 
-                                    // Populate the custom billing details child table
-                                    frm.clear_table('billing_invoice_details');
+                // Populate the custom billing details child table
+                frm.clear_table('billing_invoice_details');
                                     data.billing_details.forEach(function(row_data) {
                                         frm.add_child('billing_invoice_details', row_data);
                                     });
-                                    frm.refresh_field('billing_invoice_details');                frm.set_df_property('billing_invoice_details', 'read_only', 1);
+                                    console.log("DEBUG: frm.doc.billing_invoice_details length after add_child:", frm.doc.billing_invoice_details.length);
+                                    frm.refresh_field('billing_invoice_details');
+                                    frm.set_df_property('billing_invoice_details', 'read_only', 1);
 
                 // --- FLAG LOGIC ---
                 // Set the flag to true after the logic has run successfully once.

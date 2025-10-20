@@ -229,6 +229,9 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
             
 @frappe.whitelist()
 def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
+    # Ensure is_from_gr is a proper boolean, handling string "true"/"false" from client-side
+    is_from_gr = frappe.parse_json(is_from_gr) if isinstance(is_from_gr, str) else bool(is_from_gr)
+
     billing_details = []
     po_items = []
     selected_term_invoice_portion = 0
@@ -266,10 +269,25 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
         has_draft_term = False
 
         if cint(is_from_gr):
-            selected_term_invoice_portion = 100
-            selected_term_description = _("Tagihan berdasarkan Kuantitas Goods Receipt")
-            selected_term_payment_amount = 0  # Biarkan klien yang menghitung dari item GR
-            selected_term_name_for_client = None
+            # Find the term that is waiting for a GR
+            gr_term = None
+            for term in po_doc.payment_schedule:
+                if term.invoice_basis == 'GR Quantity':
+                    gr_term = term
+                    break
+            
+            if gr_term:
+                selected_term = gr_term
+                selected_term_invoice_portion = gr_term.invoice_portion
+                selected_term_description = gr_term.description
+                selected_term_name_for_client = gr_term.name
+                selected_term_payment_amount = 0 
+            else:
+                # Fallback case if no GR term is found
+                selected_term_invoice_portion = 100
+                selected_term_description = _("Tagihan berdasarkan Kuantitas Goods Receipt (Termin tidak ditemukan)")
+                selected_term_payment_amount = 0
+                selected_term_name_for_client = None
         else:
             # Logika pencarian termin yang ada hanya berjalan jika bukan dari GR
             linked_pi_names = frappe.get_all(
@@ -332,7 +350,7 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
 
         billing_details.append({
             "no": 1,
-            "description": "Outstanding PO",
+            "description": _("Outstanding PO") + " : " + po_name,
             "po_amount": po_doc.grand_total,
             "portion": None,
             "total_amount": outstanding_amount
