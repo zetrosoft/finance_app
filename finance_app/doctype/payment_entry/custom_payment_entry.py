@@ -70,10 +70,69 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
                 for t in self.get("taxes")
             )
             self.total_taxes_and_charges = flt(total_taxes_and_charges, self.precision("total_taxes_and_charges"))
-            self.base_total_taxes_and_charges = self.total_taxes_and_charges * self.conversion_rate
-
+            
+            # Ensure conversion_rate is not None before using it
+            conversion_rate = flt(getattr(self, 'conversion_rate', 1.0))
+            self.base_total_taxes_and_charges = self.total_taxes_and_charges * conversion_rate
+            
             self.grand_total = self.paid_amount + self.total_taxes_and_charges
             self.base_grand_total = self.base_paid_amount + self.base_total_taxes_and_charges
             
             # This is a key method to update difference_amount
             self.set_difference_amount()
+
+    def apply_taxes(self):
+        pi_name = None
+        for ref in self.get("references"):
+            if ref.reference_doctype == "Purchase Invoice":
+                pi_name = ref.reference_name
+                break
+
+        if pi_name:
+            # Check if the linked PI has taxes
+            pi_has_taxes = frappe.call(
+                "finance_app.doctype.payment_entry.custom_payment_entry.check_purchase_invoice_has_taxes",
+                pi_name=pi_name
+            )
+            
+            if pi_has_taxes:
+                # If PI has taxes, ensure PE taxes are zeroed out for ledger purposes
+                self.total_taxes_and_charges = 0
+                self.base_total_taxes_and_charges = 0
+                self.taxes = [] # Clear the taxes child table
+                # No need to call super().apply_taxes() as we're overriding the tax application
+            else:
+                # If PI has no taxes, allow manual taxes in PE to be applied
+                super().apply_taxes()
+        else:
+            # If no PI is linked, allow manual taxes in PE to be applied
+            super().apply_taxes()
+
+
+
+
+@frappe.whitelist()
+
+def check_purchase_invoice_has_taxes(pi_name):
+
+    if not pi_name:
+
+        return False
+
+    
+
+    try:
+
+        pi_doc = frappe.get_doc("Purchase Invoice", pi_name)
+
+        if pi_doc.taxes and len(pi_doc.taxes) > 0:
+
+            return True
+
+        return False
+
+    except Exception as e:
+
+        frappe.log_error(f"Error checking taxes for Purchase Invoice {pi_name}: {e}")
+
+        return False

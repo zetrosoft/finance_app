@@ -65,7 +65,7 @@
         "fieldtype": "Link",
         "label": "Payment Schedule Term",
         "options": "Payment Schedule",
-        "insert_after": "purchase_order",
+        "insert_after": "currency_and_price_list",
         "read_only": 1,
         "no_copy": 1
     },
@@ -96,7 +96,7 @@
         "fieldname": "billing_details_section",
         "fieldtype": "Section Break",
         "label": "Billing Details",
-        "insert_after": "taxes"
+        "insert_after": "custom_payment_schedule_term"
     },
     {
         "doctype": "Custom Field",
