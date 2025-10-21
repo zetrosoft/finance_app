@@ -7,32 +7,33 @@ def run_clear_transactions():
     print("Memulai penghapusan data transaksional...")
 
     doc_types_to_delete = [
+        "Journal Entry",
         "Payment Entry",
         "Purchase Invoice",
-        "Purchase Receipt",
-        "Purchase Order",
         "Sales Invoice",
+        "Purchase Receipt",
         "Delivery Note",
+        "Purchase Order",
         "Sales Order",
-        "Journal Entry",
+        "Stock Entry",
         # Tambahkan DocType transaksional kustom Anda di sini jika ada
     ]
 
     for doctype in doc_types_to_delete:
         print(f"\nMenghapus dokumen dari DocType: {doctype}")
         try:
-            # Ambil semua nama dokumen untuk DocType ini
             doc_names = frappe.get_all(doctype, pluck="name")
             
             if doc_names:
                 for doc_name in doc_names:
                     try:
-                        frappe.delete_doc(doctype, doc_name, ignore_permissions=True, force=True)
+                        # Attempt to delete, including cancelling if submitted
+                        frappe.delete_doc(doctype, doc_name, ignore_permissions=True, force=True, cancel=True)
                         print(f"  Berhasil menghapus {doctype}: {doc_name}")
                     except Exception as e:
                         print(f"  Gagal menghapus {doctype} {doc_name}: {e}")
                 frappe.db.commit()
-                print(f"  Semua dokumen {doctype} telah dihapus dan perubahan di-commit.")
+                print(f"  Semua dokumen {doctype} telah diproses dan perubahan di-commit.")
             else:
                 print(f"  Tidak ada dokumen {doctype} yang ditemukan untuk dihapus.")
         except Exception as e:
@@ -41,6 +42,4 @@ def run_clear_transactions():
     print("\nPenghapusan data transaksional selesai.")
 
 if __name__ == "__main__":
-    # Ini akan dijalankan jika skrip dieksekusi langsung
-    # Namun, untuk Frappe, lebih baik menggunakan bench execute
     run_clear_transactions()
