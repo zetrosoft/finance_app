@@ -70,6 +70,12 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                 po_name: po_name_arg,
                 is_from_gr: is_from_gr_arg
             };
+
+            // Only add current_pi_name if the document is not new
+            if (!frm.is_new()) {
+                args.current_pi_name = frm.doc.name;
+            }
+
             console.log("DEBUG: Arguments sent to server:", args);
             frappe.call({
                 method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
@@ -94,7 +100,8 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                 let data = r.message;
                 console.log("DEBUG: Server response data.billing_details:", data.billing_details);
 
-                if (data.has_draft_term) {
+                // Only show warning and redirect if it's a NEW PI being created from a PO that has a draft term
+                if (frm.is_new() && data.has_draft_term) {
                     frappe.msgprint({
                         title: __('Peringatan'),
                         indicator: 'orange',
@@ -108,10 +115,10 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                 if (data.selected_term_idx) {
                     frm.set_value('custom_payment_schedule_term', data.selected_term_idx);
                     frm.get_field('custom_payment_schedule_term').df.hidden = 1; // Hide after setting
-                } else {
-                    // If no term is selected, only show a message if it's not a GR-based invoice.
-                    // For GR-based invoices, having no specific term is expected.
-                    if (!frm.is_from_gr) {
+                } else { // data.selected_term_idx is null/undefined
+                    // If no term is selected, only show a message if it's a NEW PI AND not a GR-based invoice.
+                    // For existing PIs or GR-based PIs, this message should not stop processing.
+                    if (frm.is_new() && !frm.is_from_gr) {
                         frm.get_field('custom_payment_schedule_term').df.hidden = 1;
                         frappe.msgprint({
                             title: __('Informasi'),
