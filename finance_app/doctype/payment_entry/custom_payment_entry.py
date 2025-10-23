@@ -5,6 +5,69 @@ from frappe.utils import flt, cint
 # Import the original PaymentEntry class from ERPNext
 from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry as ERPNextPaymentEntry
 
+# Tambahkan fungsi get_payment_entry kustom di luar kelas
+@frappe.whitelist()
+def get_payment_entry(dt, dn, party_amount=None, bank_account=None, bank_amount=None, party_type=None, payment_type=None, reference_date=None, ignore_permissions=False, created_from_payment_request=False):
+    frappe.log_error(f"DEBUG: get_payment_entry called for dt={dt}, dn={dn}", "Payment Entry Debug")
+    
+    # Panggil fungsi get_payment_entry standar dari ERPNext
+    from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry as erpnext_get_payment_entry
+    
+    pe = erpnext_get_payment_entry(dt, dn, party_amount, bank_account, bank_amount, party_type, payment_type, reference_date, ignore_permissions, created_from_payment_request)
+
+    # Log outstanding_amount dari PI yang direferensikan oleh PE
+    if dt == "Purchase Invoice":
+        try:
+            pi_doc = frappe.get_doc("Purchase Invoice", dn)
+        except Exception as e:
+            frappe.log_error(f"DEBUG: Could not get PI {dn} for logging outstanding_amount: {e}", "Payment Entry Debug")
+
+        # Terapkan logika penggabungan referensi jika Payment Entry dibuat dari Purchase Invoice
+        if dt == "Purchase Invoice":
+            # Always clear existing PI references and add a single consolidated one
+            
+            # Get all existing references that are NOT Purchase Invoices
+            non_pi_references = [
+                ref for ref in pe.get("references")
+                if not (ref.reference_doctype == "Purchase Invoice" and ref.reference_name == dn)
+            ]
+    
+            # Fetch the actual outstanding amount of the PI
+            actual_pi_outstanding = frappe.db.get_value("Purchase Invoice", dn, "outstanding_amount")
+            if actual_pi_outstanding is None:
+                actual_pi_outstanding = 0.0
+    
+            # Get the first PI reference from the original list to extract other fields
+            # This assumes erpnext_get_payment_entry always returns at least one PI reference if dt is Purchase Invoice
+            first_pi_ref = None
+            for ref in pe.get("references"):
+                if ref.reference_doctype == "Purchase Invoice" and ref.reference_name == dn:
+                    first_pi_ref = ref
+                    break
+            
+            if first_pi_ref: # Only append if a PI reference was found initially
+                # Create the single consolidated PI reference
+                consolidated_pi_reference = frappe._dict({
+                    "reference_doctype": "Purchase Invoice",
+                    "reference_name": dn, # Use dn directly as it's the PI name
+                    "outstanding_amount": actual_pi_outstanding,
+                    "allocated_amount": actual_pi_outstanding, # Initially allocate the full outstanding amount
+                    "bill_no": first_pi_ref.bill_no,
+                    "due_date": first_pi_ref.due_date,
+                    "total_amount": first_pi_ref.total_amount,
+                    "payment_term": None,
+                    "payment_term_outstanding": 0
+                })
+                non_pi_references.append(consolidated_pi_reference)
+            
+            pe.set("references", non_pi_references)
+            # Perbarui total_allocated_amount di Payment Entry
+            pe.set_total_allocated_amount()
+            pe.set_unallocated_amount()
+            pe.set_difference_amount()
+
+    return pe
+
 class CustomPaymentEntry(ERPNextPaymentEntry):
     def get_current_tax_amount(self, tax):
         tax_rate = tax.rate
@@ -108,31 +171,64 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
             # If no PI is linked, allow manual taxes in PE to be applied
             super().apply_taxes()
 
+    def term_based_allocation_enabled_for_reference(self, reference_doctype: str, reference_name: str) -> bool:
+        if reference_doctype == "Purchase Invoice":
+            return False # Selalu kembalikan False untuk Purchase Invoice
+        return super().term_based_allocation_enabled_for_reference(reference_doctype, reference_name)
+
+    def validate_allocated_amount_with_latest_data(self):
+        if not self.references:
+            return
+
+        for idx, d in enumerate(self.get("references"), start=1):
+            if d.reference_doctype == "Purchase Invoice":
+                # For Purchase Invoices, directly fetch the actual outstanding amount
+                actual_pi_outstanding = frappe.db.get_value("Purchase Invoice", d.reference_name, "outstanding_amount")
+                if actual_pi_outstanding is None:
+                    actual_pi_outstanding = 0.0
+
+                # Validate allocated amount against the actual PI outstanding amount
+                if flt(d.allocated_amount) > 0 and flt(d.allocated_amount) > flt(actual_pi_outstanding):
+                    frappe.throw(
+                        _("Row #{0}: Allocated Amount cannot be greater than outstanding amount.").format(d.idx)
+                    )
+                # Check for negative outstanding invoices as well
+                if flt(d.allocated_amount) < 0 and flt(d.allocated_amount) < flt(actual_pi_outstanding):
+                    frappe.throw(
+                        _("Row #{0}: Allocated Amount cannot be greater than outstanding amount.").format(d.idx)
+                    )
+            else:
+                # For other doctypes, call the original ERPNext validation
+                super().validate_allocated_amount_with_latest_data()
+
 
 
 
 @frappe.whitelist()
-
 def check_purchase_invoice_has_taxes(pi_name):
-
     if not pi_name:
-
         return False
 
-    
 
     try:
-
         pi_doc = frappe.get_doc("Purchase Invoice", pi_name)
-
         if pi_doc.taxes and len(pi_doc.taxes) > 0:
-
             return True
-
         return False
-
     except Exception as e:
-
-        frappe.log_error(f"Error checking taxes for Purchase Invoice {pi_name}: {e}")
-
         return False
+
+        
+
+    @frappe.whitelist()
+    def get_pi_outstanding_amount(pi_name):
+        if not pi_name:
+            return 0.0
+
+        try:
+            pi_doc = frappe.get_doc("Purchase Invoice", pi_name)
+            return pi_doc.outstanding_amount
+
+        except Exception as e:
+            frappe.log_error(f"Error getting outstanding amount for PI {pi_name}: {e}")
+            return 0.0

@@ -1,3 +1,7 @@
+override_whitelisted_methods = {
+    "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry": "finance_app.doctype.payment_entry.custom_payment_entry.get_payment_entry"
+}
+
 app_name = "finance_app"
 app_title = "Finance App"
 app_publisher = "Bijak Technology"
