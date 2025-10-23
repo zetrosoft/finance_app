@@ -8,7 +8,7 @@ from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry as
 # Tambahkan fungsi get_payment_entry kustom di luar kelas
 @frappe.whitelist()
 def get_payment_entry(dt, dn, party_amount=None, bank_account=None, bank_amount=None, party_type=None, payment_type=None, reference_date=None, ignore_permissions=False, created_from_payment_request=False):
-    frappe.log_error(f"DEBUG: get_payment_entry called for dt={dt}, dn={dn}", "Payment Entry Debug")
+
     
     # Panggil fungsi get_payment_entry standar dari ERPNext
     from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry as erpnext_get_payment_entry
