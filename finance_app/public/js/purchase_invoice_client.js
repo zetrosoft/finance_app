@@ -41,8 +41,7 @@ function add_info_sumber_button(frm, po_name) {
                         primary_action: function() {
                             dialog.hide();
                         }
-                    });
-                    dialog.get_field('summary_html').$wrapper.html(html);
+                    });                    dialog.get_field('summary_html').$wrapper.html(html);
                     dialog.show();
                     dialog.$wrapper.find('.modal-header').css({
                         'background-color': '#F09A37',
@@ -67,15 +66,29 @@ function format_summary_for_dialog(data) {
     let total_pr_amount = data.total_pr_amount;
     let total_pi_amount = data.total_pi_amount;
     let total_pr_qty = data.total_pr_qty;
+    let currency = po_details.currency;
+    let user_permissions = data.user_permissions || {}; // New: Get user permissions
+
+    // Helper to create clickable link if permission exists
+    const createLink = (doctype, name, has_permission) => {
+        if (has_permission) {
+            return `<a href="/app/${frappe.router.slug(doctype)}/${name}" target="_blank">${name}</a>`;
+        }
+        return name;
+    };
 
     // PO Details HTML
     let po_html = `
         <h4>Detail Purchase Order</h4>
         <table class="table table-bordered table-sm">
             <tbody>
-                <tr><td style="width: 30%;">No. Purchase Order</td><td>${po_details.name}</td></tr>
+                <tr>
+                    <td style="width: 30%;">No. Purchase Order</td>
+                    <td>${createLink('Purchase Order', po_details.name, user_permissions.PurchaseOrder)}</td>
+                </tr>
                 <tr><td>Total Kuantitas</td><td>${po_details.total_qty}</td></tr>
-                <tr><td>Total Nilai</td><td>${frappe.format(po_details.total_amount, {fieldtype: 'Currency', currency: po_details.currency})}</td></tr>
+                <tr><td>Nilai Net (Sebelum Pajak)</td><td>${frappe.format(po_details.net_total, {fieldtype: 'Currency', currency: currency})}</td></tr>
+                <tr><td>Nilai Bruto (Termasuk Pajak)</td><td>${frappe.format(po_details.grand_total, {fieldtype: 'Currency', currency: currency})}</td></tr>
             </tbody>
         </table>
     `;
@@ -85,14 +98,15 @@ function format_summary_for_dialog(data) {
         po_html += '<h5>Jadwal Pembayaran</h5>';
         po_html += `
             <table class="table table-bordered table-sm">
-                <thead><tr><th>Termin</th><th>Deskripsi</th><th style="text-align: right;">Porsi</th><th style="text-align: right;">Nilai</th></tr></thead>
+                <thead><tr><th>Termin</th><th>Basis Invoice</th><th>Jatuh Tempo</th><th style="text-align: right;">Porsi</th><th style="text-align: right;">Nilai</th></tr></thead>
                 <tbody>
                     ${po_details.payment_schedule.map(term => `
                         <tr>
-                            <td>${term.payment_term}</td>
-                            <td>${term.description || ''}</td>
+                            <td class="term-cell" data-description="${escapeHtml(term.description || '')}">${term.payment_term}</td>
+                            <td>${term.invoice_basis || ''}</td>
+                            <td>${frappe.datetime.str_to_user(term.due_date) || ''}</td>
                             <td style="text-align: right;">${term.invoice_portion}%</td>
-                            <td style="text-align: right;">${frappe.format(term.amount, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                            <td style="text-align: right;">${frappe.format(term.amount, {fieldtype: 'Currency', currency: currency})}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -115,16 +129,16 @@ function format_summary_for_dialog(data) {
                 <tbody>
                     ${pi_list.map(pi => `
                         <tr>
-                            <td>${pi.name}</td>
+                            <td>${createLink('Purchase Invoice', pi.name, user_permissions.PurchaseInvoice)}</td>
                             <td>${pi.status}</td>
-                            <td style="text-align: right;">${frappe.format(pi.grand_total, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                            <td style="text-align: right;">${frappe.format(pi.grand_total, {fieldtype: 'Currency', currency: currency})}</td>
                         </tr>
                     `).join('')}
                 </tbody>
                 <tfoot>
                     <tr>
                         <td colspan="2" style="text-align: right;"><b>Total Nilai Invoice</b></td>
-                        <td style="text-align: right;"><b>${frappe.format(total_pi_amount, {fieldtype: 'Currency', currency: po_details.currency})}</b></td>
+                        <td style="text-align: right;"><b>${frappe.format(total_pi_amount, {fieldtype: 'Currency', currency: currency})}</b></td>
                     </tr>
                 </tfoot>
             </table>
@@ -149,10 +163,10 @@ function format_summary_for_dialog(data) {
                 <tbody>
                     ${pr_list.map(pr => `
                         <tr>
-                            <td>${pr.name}</td>
+                            <td>${createLink('Purchase Receipt', pr.name, user_permissions.PurchaseReceipt)}</td>
                             <td>${frappe.datetime.str_to_user(pr.posting_date)}</td>
                             <td style="text-align: right;">${pr.total_qty}</td>
-                            <td style="text-align: right;">${frappe.format(pr.amount, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                            <td style="text-align: right;">${frappe.format(pr.amount, {fieldtype: 'Currency', currency: currency})}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -160,7 +174,7 @@ function format_summary_for_dialog(data) {
                     <tr>
                         <td colspan="2" style="text-align: right;"><b>Total</b></td>
                         <td style="text-align: right;"><b>${total_pr_qty}</b></td>
-                        <td style="text-align: right;"><b>${frappe.format(total_pr_amount, {fieldtype: 'Currency', currency: po_details.currency})}</b></td>
+                        <td style="text-align: right;"><b>${frappe.format(total_pr_amount, {fieldtype: 'Currency', currency: currency})}</b></td>
                     </tr>
                 </tfoot>
             </table>
@@ -175,13 +189,34 @@ function format_summary_for_dialog(data) {
         <table class="table table-bordered table-sm">
             <tbody>
                 <tr><td style="width: 30%;">Outstanding Kuantitas</td><td style="text-align: right;">${outstanding_details.outstanding_qty}</td></tr>
-                <tr><td>Outstanding Nilai</td><td style="text-align: right;">${frappe.format(outstanding_details.outstanding_amount, {fieldtype: 'Currency', currency: po_details.currency})}</td></tr>
+                <tr><td>Outstanding Nilai</td><td style="text-align: right;">${frappe.format(outstanding_details.outstanding_amount, {fieldtype: 'Currency', currency: currency})}</td></tr>
             </tbody>
         </table>
     `;
 
     return po_html + pi_html + pr_html + outstanding_html;
 }
+
+// Helper function to escape HTML for tooltips
+function escapeHtml(unsafe) {
+    return unsafe
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+}
+
+// Add event listener for tooltips after dialog is shown
+$(document).on('dialog-show', function(e, dialog) {
+    if (dialog.title.includes('Ringkasan Sumber')) {
+        dialog.$wrapper.find('.term-cell').tooltip({
+            title: function() { return $(this).data('description'); },
+            placement: 'top',
+            container: 'body'
+        });
+    }
+});
 
 // Helper function to compare floating point numbers with a tolerance
 function areFloatsEqual(a, b, epsilon = 0.001) {
@@ -330,9 +365,9 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                     return;
                 }
 
-                // --- SINGLE, CORRECT LOGIC BLOCK ---
-                // Adjust item quantities on load based on the final calculated amount from server
-                if (frm.po_total && frm.po_total > 0 && data.selected_term_payment_amount !== undefined) {
+                // --- CORRECT LOGIC BLOCK ---
+                // 1. Adjust item quantities on load based on the final calculated amount from server
+                if (frm.po_total > 0 && data.selected_term_payment_amount !== undefined) {
                     let portion = data.selected_term_payment_amount / frm.po_total;
                     let changes_made = false;
                     frm.doc.items.forEach(pi_item => {
@@ -368,22 +403,47 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                     });
                     frm.refresh_field('billing_invoice_details');
                     
-                    // Set permissions for editing
-                    if (frm.perm[0].write) {
-                        frm.fields_dict.billing_invoice_details.grid.grid_rows.forEach(row => {
-                            if(row.doc.no > 1) { // Only make term rows editable
+                    // Hide the "Add New" button for billing_invoice_details
+                    frm.set_df_property('billing_invoice_details', 'cannot_add_rows', true);
+
+                    frm.custom_billing_logic_run = true;
+
+                    // Attach event listener to grid for row rendering
+                    frm.fields_dict.billing_invoice_details.grid.grid_rows.forEach(row => {
+                        // Set permissions for editing 'total_amount'
+                        // For the first row (Outstanding PO), it should always be read-only
+                        if (row.doc.no === 1) {
+                            row.toggle_editable('total_amount', false);
+                        }
+                        // For the second row (Term Detail), apply conditional editing
+                        else if (row.doc.no === 2) {
+                            if (frm.perm[0].write && data.is_last_term && data.selected_term_invoice_basis === 'Percentage') {
                                 row.toggle_editable('total_amount', true);
+                            } else {
+                                row.toggle_editable('total_amount', false);
                             }
-                        });
+                        }
+                    });
+
+                    // Hide the delete button in the grid toolbar if any row is selected
+                    // This needs to be done after the grid is rendered
+                    const grid = frm.fields_dict.billing_invoice_details.grid;
+                    if (grid) {
+                        // Use grid_buttons_filter to prevent delete buttons from appearing
+                        grid.grid_buttons_filter = function(buttons) {
+                            return buttons.filter(button => {
+                                return !['Delete', 'Delete All'].includes(button.label);
+                            });
+                        };
+                        // Refresh the grid to apply the filter
+                        grid.refresh(); // Ensure the filter is applied immediately
                     }
-                    frm.refresh_field('billing_invoice_details');
-                }, 500); // 500ms delay
 
-                frm.custom_billing_logic_run = true;
-
+                }, 300);
             } else {
-                frappe.msgprint({ title: __('Error'), indicator: 'red', message: __('Could not fetch billing data from the server.') });
+                    frappe.msgprint({ title: __('Error'), indicator: 'red', message: __('Could not fetch billing data from the server.') });
             }
         }
     });
 }
+

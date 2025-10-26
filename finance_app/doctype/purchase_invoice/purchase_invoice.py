@@ -240,6 +240,7 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
     has_draft_term = False
     selected_term_name_for_client = None
     selected_term = None
+    is_last = False # New: Initialize is_last
 
     if not po_name:
         return {
@@ -335,7 +336,9 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
         "selected_term_description": selected_term_description,
         "has_draft_term": has_draft_term,
         "selected_term_idx": selected_term_name_for_client,
-        "po_total": po_doc.grand_total
+        "po_total": po_doc.net_total,
+        "is_last_term": is_last, # New: Pass is_last_term to client
+        "selected_term_invoice_basis": selected_term.invoice_basis if selected_term else None # New: Pass invoice_basis
     }
 
 
@@ -412,61 +415,77 @@ def get_po_summary_data(po_name):
     try:
         po = frappe.get_doc("Purchase Order", po_name)
 
+        # Determine tax factor
+        tax_factor = 1.0
+        if flt(po.net_total) > 0:
+            tax_factor = flt(po.grand_total) / flt(po.net_total)
+
         # 1. PO Details with Payment Schedule
-        payment_schedule = [
-            {
+        payment_schedule = []
+        for term in po.payment_schedule:
+            term_amount_net = flt(po.net_total * (flt(term.invoice_portion) / 100))
+            payment_schedule.append({
                 "payment_term": term.payment_term,
                 "invoice_portion": term.invoice_portion,
-                "amount": flt(po.net_total * (flt(term.invoice_portion) / 100)),
+                "amount": term_amount_net * tax_factor, # Gross amount
                 "description": term.description,
-            }
-            for term in po.payment_schedule
-        ]
+                "invoice_basis": term.invoice_basis, # New field
+                "due_date": term.due_date, # New field
+            })
+
         po_details = {
             "name": po.name,
             "total_qty": po.total_qty,
-            "total_amount": po.grand_total,
+            "net_total": po.net_total, # New field
+            "grand_total": po.grand_total, # Existing, but now explicit
             "currency": po.currency,
             "payment_schedule": payment_schedule,
+            "has_taxes": tax_factor > 1.001 # Simple check if taxes exist
         }
 
-        # 2. PI List
+        # 2. PI List (grand_total is already gross)
         pi_list = frappe.get_all(
             "Purchase Invoice",
             filters={"purchase_order": po_name, "docstatus": ["!=", 2]},
-            fields=["name", "grand_total", "status"],
+            fields=["name", "grand_total", "status"]
         )
         total_pi_amount = sum(pi.get('grand_total', 0) for pi in pi_list)
 
-        # 3. PR List with Amount Calculation
+        # 3. PR List with Gross Amount Calculation
         pr_docs = frappe.get_all("Purchase Receipt", filters={"purchase_order": po_name, "docstatus": 1}, fields=["name"])
         pr_list = []
         total_pr_qty = 0
-        total_pr_amount = 0
+        total_pr_amount_gross = 0 # This will be gross
 
         for pr_doc_name in pr_docs:
             pr = frappe.get_doc("Purchase Receipt", pr_doc_name.name)
-            pr_amount = 0
+            pr_amount_net = 0
             for item in pr.items:
-                # Find rate from original PO item
                 po_item_rate = frappe.db.get_value("Purchase Order Item", {"parent": po_name, "item_code": item.item_code}, "rate")
                 if po_item_rate:
-                    item_amount = flt(item.qty) * flt(po_item_rate)
-                    pr_amount += item_amount
+                    item_amount_net = flt(item.qty) * flt(po_item_rate)
+                    pr_amount_net += item_amount_net
             
             pr_list.append({
                 "name": pr.name,
                 "posting_date": pr.posting_date,
                 "total_qty": pr.total_qty,
-                "amount": pr_amount, # The new calculated amount
+                "amount": pr_amount_net * tax_factor, # Gross amount
             })
             total_pr_qty += pr.total_qty
-            total_pr_amount += pr_amount
+            total_pr_amount_gross += (pr_amount_net * tax_factor)
 
-        # 4. Outstanding Info
+        # 4. Outstanding Info (Gross) (po.grand_total is already gross)
         outstanding_details = {
             "outstanding_qty": po.total_qty - total_pr_qty,
-            "outstanding_amount": po.grand_total - total_pr_amount,
+            "outstanding_amount": po.grand_total - total_pr_amount_gross, # Gross outstanding
+        }
+
+        # Add permission checks for linking
+        user_permissions = {
+            "PurchaseOrder": frappe.has_permission("Purchase Order", "read", user=frappe.session.user),
+            "PurchaseInvoice": frappe.has_permission("Purchase Invoice", "read", user=frappe.session.user),
+            "PurchaseReceipt": frappe.has_permission("Purchase Receipt", "read", user=frappe.session.user),
         }
 
         return {
@@ -474,9 +493,10 @@ def get_po_summary_data(po_name):
             "pi_list": pi_list,
             "pr_list": pr_list,
             "outstanding_details": outstanding_details,
-            "total_pr_amount": total_pr_amount,
+            "total_pr_amount": total_pr_amount_gross,
             "total_pi_amount": total_pi_amount,
             "total_pr_qty": total_pr_qty,
+            "user_permissions": user_permissions,
         }
 
     except Exception as e:
