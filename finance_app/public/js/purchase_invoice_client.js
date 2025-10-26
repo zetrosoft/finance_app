@@ -1,3 +1,188 @@
+// =================== NEW FUNCTION TO ADD THE BUTTON ===================
+function add_info_sumber_button(frm, po_name) {
+    // Find the section header
+    let section_header = $('[data-fieldname="billing_details_section"] .section-head');
+    
+    // Prevent duplicate buttons on refresh
+    if (section_header.find('.btn-info-sumber').length > 0) {
+        return;
+    }
+
+    // Create and append the button
+    let info_button = $(`
+        <button class="btn btn-primary btn-sm btn-info-sumber" style="float: right; margin-left: 5px;">
+            <i class="fa fa-info-circle"></i> Info Sumber
+        </button>
+    `).appendTo(section_header);
+
+    // Add click event handler
+    info_button.on('click', function() {
+        frappe.call({
+            method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_po_summary_data',
+            args: { po_name: po_name },
+            callback: function(r) {
+                if (r.message) {
+                    let data = r.message;
+                    
+                    // Format data into HTML
+                    let html = format_summary_for_dialog(data);
+
+                    // Show dialog
+                    let dialog = new frappe.ui.Dialog({
+                        title: __('Ringkasan Sumber: ' + data.po_details.name),
+                        size: 'large',
+                        fields: [
+                            {
+                                fieldtype: 'HTML',
+                                fieldname: 'summary_html'
+                            }
+                        ],
+                        primary_action_label: __('Tutup'),
+                        primary_action: function() {
+                            dialog.hide();
+                        }
+                    });
+                    dialog.get_field('summary_html').$wrapper.html(html);
+                    dialog.show();
+                    dialog.$wrapper.find('.modal-header').css({
+                        'background-color': '#F09A37',
+                        'border-top-left-radius': '6px',
+                        'border-top-right-radius': '6px'
+                    });
+                    dialog.$wrapper.find('.modal-content').css('border', '2px solid #F09A37');
+                } else {
+                    frappe.msgprint(__('Gagal mengambil data ringkasan PO.'));
+                }
+            }
+        });
+    });
+}
+
+// =================== NEW FUNCTION TO FORMAT HTML FOR DIALOG ===================
+function format_summary_for_dialog(data) {
+    let po_details = data.po_details;
+    let pi_list = data.pi_list;
+    let pr_list = data.pr_list;
+    let outstanding_details = data.outstanding_details;
+    let total_pr_amount = data.total_pr_amount;
+    let total_pi_amount = data.total_pi_amount;
+    let total_pr_qty = data.total_pr_qty;
+
+    // PO Details HTML
+    let po_html = `
+        <h4>Detail Purchase Order</h4>
+        <table class="table table-bordered table-sm">
+            <tbody>
+                <tr><td style="width: 30%;">No. Purchase Order</td><td>${po_details.name}</td></tr>
+                <tr><td>Total Kuantitas</td><td>${po_details.total_qty}</td></tr>
+                <tr><td>Total Nilai</td><td>${frappe.format(po_details.total_amount, {fieldtype: 'Currency', currency: po_details.currency})}</td></tr>
+            </tbody>
+        </table>
+    `;
+
+    // Payment Schedule HTML
+    if (po_details.payment_schedule && po_details.payment_schedule.length > 0) {
+        po_html += '<h5>Jadwal Pembayaran</h5>';
+        po_html += `
+            <table class="table table-bordered table-sm">
+                <thead><tr><th>Termin</th><th>Deskripsi</th><th style="text-align: right;">Porsi</th><th style="text-align: right;">Nilai</th></tr></thead>
+                <tbody>
+                    ${po_details.payment_schedule.map(term => `
+                        <tr>
+                            <td>${term.payment_term}</td>
+                            <td>${term.description || ''}</td>
+                            <td style="text-align: right;">${term.invoice_portion}%</td>
+                            <td style="text-align: right;">${frappe.format(term.amount, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    // PI List HTML
+    let pi_html = '<h4>Daftar Purchase Invoice</h4>';
+    if (pi_list && pi_list.length > 0) {
+        pi_html += `
+            <table class="table table-bordered table-sm">
+                <thead>
+                    <tr>
+                        <th>No. Invoice</th>
+                        <th>Status</th>
+                        <th style="text-align: right;">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pi_list.map(pi => `
+                        <tr>
+                            <td>${pi.name}</td>
+                            <td>${pi.status}</td>
+                            <td style="text-align: right;">${frappe.format(pi.grand_total, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2" style="text-align: right;"><b>Total Nilai Invoice</b></td>
+                        <td style="text-align: right;"><b>${frappe.format(total_pi_amount, {fieldtype: 'Currency', currency: po_details.currency})}</b></td>
+                    </tr>
+                </tfoot>
+            </table>
+        `;
+    } else {
+        pi_html += '<p>Belum ada Purchase Invoice yang dibuat untuk PO ini.</p>';
+    }
+
+    // PR List HTML
+    let pr_html = '<h4>Daftar Purchase Receipt</h4>';
+    if (pr_list && pr_list.length > 0) {
+        pr_html += `
+            <table class="table table-bordered table-sm">
+                <thead>
+                    <tr>
+                        <th>No. Receipt</th>
+                        <th>Tanggal</th>
+                        <th style="text-align: right;">Kuantitas</th>
+                        <th style="text-align: right;">Nilai</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pr_list.map(pr => `
+                        <tr>
+                            <td>${pr.name}</td>
+                            <td>${frappe.datetime.str_to_user(pr.posting_date)}</td>
+                            <td style="text-align: right;">${pr.total_qty}</td>
+                            <td style="text-align: right;">${frappe.format(pr.amount, {fieldtype: 'Currency', currency: po_details.currency})}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2" style="text-align: right;"><b>Total</b></td>
+                        <td style="text-align: right;"><b>${total_pr_qty}</b></td>
+                        <td style="text-align: right;"><b>${frappe.format(total_pr_amount, {fieldtype: 'Currency', currency: po_details.currency})}</b></td>
+                    </tr>
+                </tfoot>
+            </table>
+        `;
+    } else {
+        pr_html += '<p>Belum ada Purchase Receipt yang dibuat untuk PO ini.</p>';
+    }
+
+    // Outstanding HTML
+    let outstanding_html = `
+        <h4>Informasi Outstanding</h4>
+        <table class="table table-bordered table-sm">
+            <tbody>
+                <tr><td style="width: 30%;">Outstanding Kuantitas</td><td style="text-align: right;">${outstanding_details.outstanding_qty}</td></tr>
+                <tr><td>Outstanding Nilai</td><td style="text-align: right;">${frappe.format(outstanding_details.outstanding_amount, {fieldtype: 'Currency', currency: po_details.currency})}</td></tr>
+            </tbody>
+        </table>
+    `;
+
+    return po_html + pi_html + pr_html + outstanding_html;
+}
+
 // Helper function to compare floating point numbers with a tolerance
 function areFloatsEqual(a, b, epsilon = 0.001) {
     return Math.abs(a - b) < epsilon;
@@ -15,7 +200,6 @@ frappe.ui.form.on('Purchase Invoice', {
 
         // Logic to get PO name and check for GR link
         if (frm.doc.items && frm.doc.items.length > 0) {
-            console.log("DEBUGGING GR->PI: First item data is:", frm.doc.items[0]);
             for (let i = 0; i < frm.doc.items.length; i++) {
                 if (frm.doc.items[i].purchase_order) {
                     po_name_from_items = frm.doc.items[i].purchase_order;
@@ -28,29 +212,31 @@ frappe.ui.form.on('Purchase Invoice', {
         }
 
         frm.is_from_gr = is_from_gr;
-        console.log("DEBUG: refresh - po_name_from_items:", po_name_from_items);
-        console.log("DEBUG: refresh - frm.is_from_gr:", frm.is_from_gr);
-
-        // If the PI is linked to a PO in any way (direct or via GR), run the custom logic.
+        
         if (po_name_from_items) {
-            // --- SCENARIO 1: PI IS LINKED TO A PO (DIRECTLY OR VIA GR) ---
+            // This is a PO-linked invoice
             frm.set_df_property('sec_warehouse', 'hidden', 1);
             frm.set_df_property('items', 'hidden', 1);
             frm.set_df_property('billing_invoice_details', 'hidden', 0);
             frm.set_df_property('billing_details_section', 'hidden', 0);
+            // Hide the standard payment schedule table as requested
+            frm.set_df_property('payment_schedule', 'hidden', 1);
+
+            // === MODIFICATION: Call the function to add the button ===
+            add_info_sumber_button(frm, po_name_from_items);
 
             if (frm.doc.docstatus === 0 && !frm.custom_billing_logic_run) {
                 setup_get_billing_info_button(frm, po_name_from_items);
-                // Pass the is_from_gr flag to the data fetching function
                 fetch_and_populate_billing_data(frm, po_name_from_items, is_from_gr);
             }
 
         } else {
-            // --- SCENARIO 2: STANDALONE PI (NOT LINKED TO A PO) ---
+            // This is a Standalone PI
             frm.set_df_property('sec_warehouse', 'hidden', 0);
             frm.set_df_property('items', 'hidden', 0);
             frm.set_df_property('billing_invoice_details', 'hidden', 1);
             frm.set_df_property('billing_details_section', 'hidden', 1);
+            frm.set_df_property('payment_schedule', 'hidden', 0);
 
             frm.set_df_property('items', 'read_only', 0);
             frm.set_df_property('total', 'read_only', 0);
@@ -58,29 +244,52 @@ frappe.ui.form.on('Purchase Invoice', {
     }
 });
 
+// New onchange trigger for the child table to implement "proxy" logic
+frappe.ui.form.on('Billing Invoice Detail', {
+    total_amount: function(frm, cdt, cdn) {
+        let child_row = locals[cdt][cdn];
+        // Pastikan frm.po_total ada dan tidak nol
+        if (frm.po_total && frm.po_total > 0 && child_row.idx > 1) { 
+            let new_portion = (child_row.total_amount / frm.po_total) * 100;
+            
+            if (frm.po_items && frm.po_items.length > 0) {
+                frm.doc.items.forEach(pi_item => {
+                    const original_po_item = frm.po_items.find(po_item => po_item.name === pi_item.po_detail);
+                    if (original_po_item) {
+                        const new_qty = original_po_item.qty * (new_portion / 100);
+                        if (!areFloatsEqual(pi_item.qty, new_qty)) {
+                            frappe.model.set_value(pi_item.doctype, pi_item.name, 'qty', new_qty);
+                        }
+                    }
+                });
+                frm.refresh_field('items');
+            }
+        }
+    }
+});
+
 function setup_get_billing_info_button(frm, po_name_arg) {
-    frm.clear_custom_buttons();
-    frm.add_custom_button(__('Get Billing Info'), function() {
-        fetch_and_populate_billing_data(frm, po_name_arg, frm.is_from_gr);
-    }, __("Billing Info"));
+    if (frappe.user.has_role('Administrator')) {
+        frm.clear_custom_buttons();
+        frm.add_custom_button(__('Get Billing Info'), function() {
+            fetch_and_populate_billing_data(frm, po_name_arg, frm.is_from_gr);
+        }, __("Billing Info"));
+    }
 }
 
 function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
-            const args = {
-                po_name: po_name_arg,
-                is_from_gr: is_from_gr_arg
-            };
+    const args = {
+        po_name: po_name_arg,
+        is_from_gr: is_from_gr_arg
+    };
 
-            // Only add current_pi_name if the document is not new
-            if (!frm.is_new()) {
-                args.current_pi_name = frm.doc.name;
-            }
+    if (!frm.is_new()) {
+        args.current_pi_name = frm.doc.name;
+    }
 
-            console.log("DEBUG: Arguments sent to server:", args);
-            frappe.call({
-                method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
-                args: args,
-    
+    frappe.call({
+        method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_billing_invoice_data',
+        args: args,
         callback: function(r) {
             if (r.message && r.message.validation_failed) {
                 frm.disable_save();
@@ -93,95 +302,88 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                         action: () => frappe.set_route('Form', 'Purchase Order', po_name_arg)
                     }
                 });
-                return; // Stop processing
+                return;
             }
 
             if (r.message) {
                 let data = r.message;
-                console.log("DEBUG: Server response data.billing_details:", data.billing_details);
+                // Store PO items and total on the form object for later use (e.g., in onchange)
+                frm.po_items = data.po_items;
+                frm.po_total = data.po_total;
 
-                // Only show warning and redirect if it's a NEW PI being created from a PO that has a draft term
                 if (frm.is_new() && data.has_draft_term) {
                     frappe.msgprint({
                         title: __('Peringatan'),
                         indicator: 'orange',
                         message: __('Masih ada termin pembayaran yang berstatus Draft atau belum disubmit untuk Purchase Order ini. Harap selesaikan atau batalkan Purchase Invoice sebelumnya.')
                     });
-                    frappe.set_route('List', 'Purchase Order'); // Redirect back to PO list
-                    return; // Stop further processing
+                    frappe.set_route('List', 'Purchase Order');
+                    return;
                 }
 
-                // Set custom_payment_schedule_term based on server's selection
-                if (data.selected_term_idx) {
-                    frm.set_value('custom_payment_schedule_term', data.selected_term_idx);
-                    frm.get_field('custom_payment_schedule_term').df.hidden = 1; // Hide after setting
-                } else { // data.selected_term_idx is null/undefined
-                    // If no term is selected, only show a message if it's a NEW PI AND not a GR-based invoice.
-                    // For existing PIs or GR-based PIs, this message should not stop processing.
-                    if (frm.is_new() && !frm.is_from_gr) {
-                        frm.get_field('custom_payment_schedule_term').df.hidden = 1;
-                        frappe.msgprint({
-                            title: __('Informasi'),
-                            indicator: 'blue',
-                            message: __('Tidak ada termin pembayaran yang tersedia untuk Purchase Order ini.')
-                                                
-                            });
-                            return
-                    }
-                    // Optionally, disable save or other actions if no term is available
+                if (!data.selected_term_idx && frm.is_new() && !frm.is_from_gr) {
+                    frappe.msgprint({
+                        title: __('Informasi'),
+                        indicator: 'blue',
+                        message: __('Tidak ada termin pembayaran yang tersedia untuk Purchase Order ini.')
+                    });
+                    return;
                 }
-                // --- FLOAT-SAFE UPDATE STRATEGY ---
-                // Only run quantity recalculation if NOT creating from a GR
-                if (!frm.is_from_gr && data.selected_term_invoice_portion !== undefined) {
-                    const portion = data.selected_term_invoice_portion / 100;
+
+                // --- SINGLE, CORRECT LOGIC BLOCK ---
+                // Adjust item quantities on load based on the final calculated amount from server
+                if (frm.po_total && frm.po_total > 0 && data.selected_term_payment_amount !== undefined) {
+                    let portion = data.selected_term_payment_amount / frm.po_total;
                     let changes_made = false;
+                    frm.doc.items.forEach(pi_item => {
+                        const original_po_item = frm.po_items.find(po_item => po_item.name === pi_item.po_detail);
+                        if (original_po_item) {
+                            const new_qty = original_po_item.qty * portion;
+                            if (!areFloatsEqual(pi_item.qty, new_qty)) {
+                                frappe.model.set_value(pi_item.doctype, pi_item.name, 'qty', new_qty);
+                                changes_made = true;
+                            }
+                        }
+                    });
+                    if (changes_made) {
+                        // Use a timeout to ensure totals are calculated before refreshing other fields
+                        setTimeout(() => frm.refresh_field('items'), 200);
+                    }
+                }
 
-                    if (portion > 0 && data.po_items && data.po_items.length > 0) {
-                        frm.doc.items.forEach(pi_item => {
-                            const original_po_item = data.po_items.find(po_item => po_item.name === pi_item.po_detail);
-                            if (original_po_item) {
-                                const new_qty = original_po_item.qty * portion;
-                                
-                                // *** THE FIX: Compare with tolerance to avoid float precision issues ***
-                                if (!areFloatsEqual(pi_item.qty, new_qty)) {
-                                    changes_made = true;
-                                    frappe.model.set_value(pi_item.doctype, pi_item.name, 'qty', new_qty);
-                                }
+                // Use a timeout to allow grand_total to recalculate before populating display tables
+                setTimeout(() => {
+                    // Populate the visible billing_invoice_details table
+                    frm.clear_table('billing_invoice_details');
+                    // Update amount in billing_details with the now-correct grand_total if needed
+                    if (data.billing_details) {
+                        const term_detail = data.billing_details.find(d => d.no === 2);
+                        if (term_detail) {
+                            // The grand_total should now reflect the adjusted item quantities
+                            term_detail.total_amount = frm.doc.grand_total;
+                        }
+                    }
+                    data.billing_details.forEach(function(row_data) {
+                        frm.add_child('billing_invoice_details', row_data);
+                    });
+                    frm.refresh_field('billing_invoice_details');
+                    
+                    // Set permissions for editing
+                    if (frm.perm[0].write) {
+                        frm.fields_dict.billing_invoice_details.grid.grid_rows.forEach(row => {
+                            if(row.doc.no > 1) { // Only make term rows editable
+                                row.toggle_editable('total_amount', true);
                             }
                         });
                     }
+                    frm.refresh_field('billing_invoice_details');
+                }, 500); // 500ms delay
 
-                    if (changes_made) {
-                        frm.refresh_field('items');
-                    }
-                }
-                console.log("DEBUB:frm",frm.data)
-                // Correct the total_amount for GR-based invoice before rendering
-                if (frm.is_from_gr) {
-                    data.billing_details.forEach(function(row) {
-                    // The GR-based row has a 100% portion
-                        if (row.portion === 100) {
-                            row.total_amount = frm.doc.grand_total;
-                        }
-                    });
-                }
-                
-                // Populate the custom billing details child table
-                frm.clear_table('billing_invoice_details');
-                                    data.billing_details.forEach(function(row_data) {
-                                        frm.add_child('billing_invoice_details', row_data);
-                                    });
-                                    console.log("DEBUG: frm.doc.billing_invoice_details length after add_child:", frm.doc.billing_invoice_details.length);
-                                    frm.refresh_field('billing_invoice_details');
-                                    frm.set_df_property('billing_invoice_details', 'read_only', 1);
-
-                // --- FLAG LOGIC ---
-                // Set the flag to true after the logic has run successfully once.
                 frm.custom_billing_logic_run = true;
 
             } else {
-                frappe.msgprint({ title: __('Error'), indicator: 'red', message: __('Could not fetch billing data from the server. Response may be missing invoice portion.') });
+                frappe.msgprint({ title: __('Error'), indicator: 'red', message: __('Could not fetch billing data from the server.') });
             }
         }
-    })
+    });
 }

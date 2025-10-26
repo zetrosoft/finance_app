@@ -229,221 +229,113 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
                             break
             
 @frappe.whitelist()
-            
 def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
-            
-    # Ensure is_from_gr is a proper boolean, handling string "true"/"false" from client-side
-            
     is_from_gr = frappe.parse_json(is_from_gr) if isinstance(is_from_gr, str) else bool(is_from_gr)
-            
-
-            
+    
     billing_details = []
-            
     po_items = []
-            
     selected_term_invoice_portion = 0
-            
     selected_term_payment_amount = 0
-            
     selected_term_description = ""
-            
     has_draft_term = False
-            
     selected_term_name_for_client = None
-            
     selected_term = None
-            
 
-            
     if not po_name:
-            
         return {
-            
             "billing_details": [], "selected_term_payment_amount": 0, "po_items": [],
-            
             "selected_term_invoice_portion": 0, "selected_term_description": "", "has_draft_term": False,
-            
         }
-            
 
-            
     try:
-            
         po_doc = frappe.get_doc("Purchase Order", po_name)
-            
-
-            
-        # --- GR Quantity Validation ---
-            
-        if not cint(is_from_gr):
-            
-            for term in po_doc.payment_schedule:
-            
-                if term.invoice_basis == 'GR Quantity':
-            
-                    return {
-            
-                        "validation_failed": True,
-            
-                        "message": _("PO ini baru bisa dibuatkan invoice setelah dilakukan Good Receipt dan dibuat dari Menu GR")
-            
-                    }
-            
-        # --- End of GR Quantity Validation ---
-            
-
-            
         po_items = [item.as_dict() for item in po_doc.items]
-            
+
+        # --- Term Selection Logic (from existing code) ---
+        for term in po_doc.payment_schedule:
+            if term.invoice_reference and term.invoice_reference != current_pi_name:
+                if frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 0:
+                    has_draft_term = True
+                    break
         
-            
-        if cint(is_from_gr):
-            
-            # Find the term that is waiting for a GR
-            
-            gr_term = next((term for term in po_doc.payment_schedule if term.invoice_basis == 'GR Quantity'), None)
-            
-            
-            
-            if gr_term:
-            
-                selected_term = gr_term
-            
-            else:
-            
-                # Fallback case if no GR term is found
-            
-                selected_term_invoice_portion = 100
-            
-                selected_term_description = _("Tagihan berdasarkan Kuantitas Goods Receipt (Termin tidak ditemukan)")
-            
-        else:
-            
-            # --- Start: New Term Selection Logic ---
-            
-            # 1. Check for other existing draft PIs for this PO.
-            
-            for term in po_doc.payment_schedule:
-            
-                if term.invoice_reference and term.invoice_reference != current_pi_name:
-            
-                    if frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 0:
-            
-                        has_draft_term = True
-            
-                        break
-            
+        if current_pi_name:
+            selected_term = next((term for term in po_doc.payment_schedule if term.invoice_reference == current_pi_name), None)
+        
+        if not selected_term:
+            selected_term = next((term for term in po_doc.payment_schedule if not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2), None)
 
-            
-            # 2. Select the term for the current context.
-            
-            # If editing an existing PI, find its linked term.
-            
-            if current_pi_name:
-            
-                selected_term = next((term for term in po_doc.payment_schedule if term.invoice_reference == current_pi_name), None)
-            
-            
-            
-            # If creating a new PI, find the next truly available term.
-            
-            if not selected_term:
-            
-                selected_term = next((term for term in po_doc.payment_schedule if not term.invoice_reference or frappe.db.get_value("Purchase Invoice", term.invoice_reference, "docstatus") == 2), None)
-            
-            # --- End: New Term Selection Logic ---
-            
-
-            
+        # --- New Validation Rule ---
         if selected_term:
-            
+            is_last = selected_term.idx == len(po_doc.payment_schedule)
+            if is_from_gr and selected_term.invoice_basis == 'Percentage' and not is_last:
+                return {
+                    "validation_failed": True,
+                    "message": _("Invoice untuk termin persentase (seperti DP) tidak bisa dibuat dari Goods Receipt. Harap buat Invoice dari Purchase Order.")
+                }
+
+        # --- Main Calculation Logic ---
+        final_pi_amount = 0
+        if selected_term:
             selected_term_name_for_client = selected_term.name
-            
             selected_term_invoice_portion = selected_term.invoice_portion
-            
             selected_term_description = selected_term.description
             
-        
-            
-        if po_doc.net_total is not None and selected_term_invoice_portion is not None:
-            
-            selected_term_payment_amount = flt(po_doc.net_total * (selected_term_invoice_portion / 100))
-            
-        else:
-            
-            selected_term_payment_amount = 0
-            
-            
-            
+            # Calculate standard amount based on percentage
+            standard_term_amount = flt(po_doc.net_total * (flt(selected_term.invoice_portion) / 100))
+            final_pi_amount = standard_term_amount # Default to standard amount
+
+            # Check if adjustment is needed based on GR value
+            total_gr_amount = frappe.db.sql("""
+                SELECT SUM(pri.amount) FROM `tabPurchase Receipt Item` pri
+                JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
+                WHERE pri.purchase_order = %(po_name)s AND pr.docstatus = 1
+            """, {"po_name": po_name}, as_list=True)[0][0] or 0
+
+            # An adjustment is needed if some goods have been received, but not all of them
+            if 0 < total_gr_amount < po_doc.net_total:
+                total_previous_pi_amount = frappe.db.sql("""
+                    SELECT SUM(pii.amount) FROM `tabPurchase Invoice Item` pii
+                    JOIN `tabPurchase Invoice` pi ON pii.parent = pi.name
+                    WHERE pii.purchase_order = %(po_name)s AND pi.docstatus = 1 AND pi.name != %(current_pi_name)s
+                """, {"po_name": po_name, "current_pi_name": current_pi_name or ''})[0][0] or 0
+                
+                adjusted_amount = total_gr_amount - total_previous_pi_amount
+                
+                # The final amount is the lesser of the two, ensuring we don't over-invoice the term
+                final_pi_amount = min(adjusted_amount, standard_term_amount)
+                selected_term_description += _(" (Disesuaikan dengan GR)")
+
+        selected_term_payment_amount = final_pi_amount
+
+        # --- Populate Billing Details for Display ---
         total_billed_amount = frappe.db.get_value(
-            
             "Purchase Invoice Item", {"purchase_order": po_name, "docstatus": 1}, "sum(amount)"
-            
         ) or 0
-            
-
-            
         outstanding_amount = po_doc.net_total - total_billed_amount
-            
 
-            
         billing_details.append({
-            
             "no": 1, "description": _("Outstanding PO") + " : " + po_name,
-            
             "po_amount": po_doc.grand_total, "portion": None, "total_amount": outstanding_amount
-            
         })
-            
         
-            
-        if cint(is_from_gr):
-            
-            billing_details.append({
-            
-                "no": 2, "description": _("Tagihan berdasarkan Kuantitas Goods Receipt"),
-            
-                "po_amount": None, "portion": 100, "total_amount": outstanding_amount
-            
-            })
-            
-        elif selected_term:
-            
-            billing_details.append({
-            
-                "no": 2, "description": selected_term_description, "po_amount": None,
-            
-                "portion": selected_term_invoice_portion, "total_amount": selected_term_payment_amount
-            
-            })
-            
+        billing_details.append({
+            "no": 2, "description": selected_term_description, "po_amount": None,
+            "portion": selected_term_invoice_portion, "total_amount": selected_term_payment_amount
+        })
 
-            
     except Exception as e:
-            
         frappe.log_error(f"Error fetching billing invoice data: {e}", "Billing Invoice Data Error")
-            
         frappe.throw(f"Error fetching billing invoice data: {e}")
-            
 
-            
     return {
-            
         "billing_details": billing_details,
-            
         "selected_term_payment_amount": selected_term_payment_amount,
-            
         "po_items": po_items,
-            
         "selected_term_invoice_portion": selected_term_invoice_portion,
-            
         "selected_term_description": selected_term_description,
-            
         "has_draft_term": has_draft_term,
-            
-        "selected_term_idx": selected_term_name_for_client
-            
+        "selected_term_idx": selected_term_name_for_client,
+        "po_total": po_doc.grand_total
     }
 
 
@@ -511,3 +403,82 @@ def update_po_payment_term_status_on_cancel(doc, method):
                 pass
     else:
         pass
+
+@frappe.whitelist()
+def get_po_summary_data(po_name):
+    if not po_name:
+        return None
+
+    try:
+        po = frappe.get_doc("Purchase Order", po_name)
+
+        # 1. PO Details with Payment Schedule
+        payment_schedule = [
+            {
+                "payment_term": term.payment_term,
+                "invoice_portion": term.invoice_portion,
+                "amount": flt(po.net_total * (flt(term.invoice_portion) / 100)),
+                "description": term.description,
+            }
+            for term in po.payment_schedule
+        ]
+        po_details = {
+            "name": po.name,
+            "total_qty": po.total_qty,
+            "total_amount": po.grand_total,
+            "currency": po.currency,
+            "payment_schedule": payment_schedule,
+        }
+
+        # 2. PI List
+        pi_list = frappe.get_all(
+            "Purchase Invoice",
+            filters={"purchase_order": po_name, "docstatus": ["!=", 2]},
+            fields=["name", "grand_total", "status"],
+        )
+        total_pi_amount = sum(pi.get('grand_total', 0) for pi in pi_list)
+
+        # 3. PR List with Amount Calculation
+        pr_docs = frappe.get_all("Purchase Receipt", filters={"purchase_order": po_name, "docstatus": 1}, fields=["name"])
+        pr_list = []
+        total_pr_qty = 0
+        total_pr_amount = 0
+
+        for pr_doc_name in pr_docs:
+            pr = frappe.get_doc("Purchase Receipt", pr_doc_name.name)
+            pr_amount = 0
+            for item in pr.items:
+                # Find rate from original PO item
+                po_item_rate = frappe.db.get_value("Purchase Order Item", {"parent": po_name, "item_code": item.item_code}, "rate")
+                if po_item_rate:
+                    item_amount = flt(item.qty) * flt(po_item_rate)
+                    pr_amount += item_amount
+            
+            pr_list.append({
+                "name": pr.name,
+                "posting_date": pr.posting_date,
+                "total_qty": pr.total_qty,
+                "amount": pr_amount, # The new calculated amount
+            })
+            total_pr_qty += pr.total_qty
+            total_pr_amount += pr_amount
+
+        # 4. Outstanding Info
+        outstanding_details = {
+            "outstanding_qty": po.total_qty - total_pr_qty,
+            "outstanding_amount": po.grand_total - total_pr_amount,
+        }
+
+        return {
+            "po_details": po_details,
+            "pi_list": pi_list,
+            "pr_list": pr_list,
+            "outstanding_details": outstanding_details,
+            "total_pr_amount": total_pr_amount,
+            "total_pi_amount": total_pi_amount,
+            "total_pr_qty": total_pr_qty,
+        }
+
+    except Exception as e:
+        frappe.log_error(f"Error in get_po_summary_data: {e}")
+        return None
