@@ -7,7 +7,7 @@ frappe.ui.form.on('Payment Entry', {
         custom_payment_entry_logic(frm);
     },
 
-    before_save: function(frm) { // Add this event handler
+    before_save: function(frm) {
         if (frm.doc.references && frm.doc.references.length > 0) {
             let pi_linked = false;
             for (let i = 0; i < frm.doc.references.length; i++) {
@@ -44,6 +44,11 @@ function custom_payment_entry_logic(frm) {
         frm.set_df_property('references', 'read_only', 1);
         frm.set_df_property('references', 'cannot_add_rows', 1);
         frm.set_df_property('references', 'cannot_delete_rows', 1);
+
+        // Make specific fields in the references child table read-only to prevent client-side overrides
+        frm.set_df_property('references.total_amount', 'read_only', 1);
+        frm.set_df_property('references.outstanding_amount', 'read_only', 1);
+        frm.set_df_property('references.allocated_amount', 'read_only', 1);
 
         // Check if PI has taxes and adjust 'taxes' table accordingly
         frappe.call({

@@ -20,6 +20,8 @@ function add_info_sumber_button(frm, po_name) {
         frappe.call({
             method: 'finance_app.doctype.purchase_invoice.purchase_invoice.get_po_summary_data',
             args: { po_name: po_name },
+            freeze: true,
+            freeze_message: __('Mengambil data sumber terbaru...'),
             callback: function(r) {
                 if (r.message) {
                     let data = r.message;
@@ -62,19 +64,21 @@ function format_summary_for_dialog(data) {
     let po_details = data.po_details;
     let pi_list = data.pi_list;
     let pr_list = data.pr_list;
+    let mr_list = data.mr_list; // NEW
+    let pe_list = data.pe_list; // NEW
     let outstanding_details = data.outstanding_details;
     let total_pr_amount = data.total_pr_amount;
     let total_pi_amount = data.total_pi_amount;
     let total_pr_qty = data.total_pr_qty;
     let currency = po_details.currency;
-    let user_permissions = data.user_permissions || {}; // New: Get user permissions
+    let user_permissions = data.user_permissions || {};
 
     // Helper to create clickable link if permission exists
     const createLink = (doctype, name, has_permission) => {
-        if (has_permission) {
+        if (has_permission && name) {
             return `<a href="/app/${frappe.router.slug(doctype)}/${name}" target="_blank">${name}</a>`;
         }
-        return name;
+        return name || '';
     };
 
     // PO Details HTML
@@ -114,8 +118,35 @@ function format_summary_for_dialog(data) {
         `;
     }
 
+    // --- NEW: Material Request List HTML ---
+    let mr_html = '<h4>Riwayat Material Request</h4>';
+    if (mr_list && mr_list.length > 0) {
+        mr_html += `
+            <table class="table table-bordered table-sm">
+                <thead>
+                    <tr>
+                        <th>No. Material Request</th>
+                        <th>Tanggal</th>
+                        <th style="text-align: right;">Total Kuantitas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${mr_list.map(mr => `
+                        <tr>
+                            <td>${createLink('Material Request', mr.name, user_permissions.MaterialRequest)}</td>
+                            <td>${frappe.datetime.str_to_user(mr.transaction_date)}</td>
+                            <td style="text-align: right;">${mr.total_quantity}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } else {
+        mr_html += '<p>Purchase Order ini tidak dibuat dari Material Request.</p>';
+    }
+
     // PI List HTML
-    let pi_html = '<h4>Daftar Purchase Invoice</h4>';
+    let pi_html = '<h4>Riwayat Purchase Invoice</h4>';
     if (pi_list && pi_list.length > 0) {
         pi_html += `
             <table class="table table-bordered table-sm">
@@ -148,7 +179,7 @@ function format_summary_for_dialog(data) {
     }
 
     // PR List HTML
-    let pr_html = '<h4>Daftar Purchase Receipt</h4>';
+    let pr_html = '<h4>Riwayat Purchase Receipt</h4>';
     if (pr_list && pr_list.length > 0) {
         pr_html += `
             <table class="table table-bordered table-sm">
@@ -183,6 +214,35 @@ function format_summary_for_dialog(data) {
         pr_html += '<p>Belum ada Purchase Receipt yang dibuat untuk PO ini.</p>';
     }
 
+    // --- NEW: Payment Entry List HTML ---
+    let pe_html = '<h4>Riwayat Payment Entry</h4>';
+    if (pe_list && pe_list.length > 0) {
+        pe_html += `
+            <table class="table table-bordered table-sm">
+                <thead>
+                    <tr>
+                        <th>No. Payment</th>
+                        <th>Tanggal</th>
+                        <th>Mode Pembayaran</th>
+                        <th style="text-align: right;">Jumlah Dibayar</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pe_list.map(pe => `
+                        <tr>
+                            <td>${createLink('Payment Entry', pe.name, user_permissions.PaymentEntry)}</td>
+                            <td>${frappe.datetime.str_to_user(pe.posting_date)}</td>
+                            <td>${pe.mode_of_payment || ''}</td>
+                            <td style="text-align: right;">${frappe.format(pe.paid_amount, {fieldtype: 'Currency', currency: currency})}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } else {
+        pe_html += '<p>Belum ada pembayaran yang tercatat untuk PO ini.</p>';
+    }
+
     // Outstanding HTML
     let outstanding_html = `
         <h4>Informasi Outstanding</h4>
@@ -194,7 +254,7 @@ function format_summary_for_dialog(data) {
         </table>
     `;
 
-    return po_html + pi_html + pr_html + outstanding_html;
+    return po_html + mr_html + pr_html + pi_html + pe_html + outstanding_html;
 }
 
 // Helper function to escape HTML for tooltips

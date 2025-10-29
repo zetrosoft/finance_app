@@ -429,21 +429,21 @@ def get_po_summary_data(po_name):
                 "invoice_portion": term.invoice_portion,
                 "amount": term_amount_net * tax_factor, # Gross amount
                 "description": term.description,
-                "invoice_basis": term.invoice_basis, # New field
-                "due_date": term.due_date, # New field
+                "invoice_basis": term.invoice_basis,
+                "due_date": term.due_date,
             })
 
         po_details = {
             "name": po.name,
             "total_qty": po.total_qty,
-            "net_total": po.net_total, # New field
-            "grand_total": po.grand_total, # Existing, but now explicit
+            "net_total": po.net_total,
+            "grand_total": po.grand_total,
             "currency": po.currency,
             "payment_schedule": payment_schedule,
-            "has_taxes": tax_factor > 1.001 # Simple check if taxes exist
+            "has_taxes": tax_factor > 1.001
         }
 
-        # 2. PI List (grand_total is already gross)
+        # 2. PI List
         pi_list = frappe.get_all(
             "Purchase Invoice",
             filters={"purchase_order": po_name, "docstatus": ["!=", 2]},
@@ -451,11 +451,11 @@ def get_po_summary_data(po_name):
         )
         total_pi_amount = sum(pi.get('grand_total', 0) for pi in pi_list)
 
-        # 3. PR List with Gross Amount Calculation
+        # 3. PR List
         pr_docs = frappe.get_all("Purchase Receipt", filters={"purchase_order": po_name, "docstatus": 1}, fields=["name"])
         pr_list = []
         total_pr_qty = 0
-        total_pr_amount_gross = 0 # This will be gross
+        total_pr_amount_gross = 0
 
         for pr_doc_name in pr_docs:
             pr = frappe.get_doc("Purchase Receipt", pr_doc_name.name)
@@ -470,22 +470,58 @@ def get_po_summary_data(po_name):
                 "name": pr.name,
                 "posting_date": pr.posting_date,
                 "total_qty": pr.total_qty,
-                "amount": pr_amount_net * tax_factor, # Gross amount
+                "amount": pr_amount_net * tax_factor,
             })
             total_pr_qty += pr.total_qty
             total_pr_amount_gross += (pr_amount_net * tax_factor)
 
-        # 4. Outstanding Info (Gross) (po.grand_total is already gross)
+        # 4. Outstanding Info
         outstanding_details = {
             "outstanding_qty": po.total_qty - total_pr_qty,
-            "outstanding_amount": po.grand_total - total_pr_amount_gross, # Gross outstanding
+            "outstanding_amount": po.grand_total - total_pr_amount_gross,
         }
 
-        # Add permission checks for linking
+        # 5. Material Request (MR) List - NEW
+        mr_names = frappe.db.sql_list("""
+            SELECT DISTINCT material_request
+            FROM `tabPurchase Order Item`
+            WHERE parent = %(po_name)s AND material_request IS NOT NULL
+        """, {"po_name": po_name})
+
+        mr_list = []
+        if mr_names:
+            mr_list = frappe.get_all(
+                "Material Request",
+                filters={"name": ["in", mr_names]},
+                fields=["name", "transaction_date", "total_quantity"]
+            )
+
+        # 6. Payment Entry (PE) List - NEW
+        pi_names = [pi.get('name') for pi in pi_list]
+        pe_list = []
+        if pi_names:
+            pe_names = frappe.db.sql_list("""
+                SELECT DISTINCT parent
+                FROM `tabPayment Entry Reference`
+                WHERE reference_doctype = 'Purchase Invoice'
+                AND reference_name IN %(pi_names)s
+                AND docstatus = 1
+            """, {"pi_names": pi_names})
+
+            if pe_names:
+                pe_list = frappe.get_all(
+                    "Payment Entry",
+                    filters={"name": ["in", pe_names]},
+                    fields=["name", "posting_date", "paid_amount", "mode_of_payment"]
+                )
+
+        # 7. Add permission checks for linking
         user_permissions = {
             "PurchaseOrder": frappe.has_permission("Purchase Order", "read", user=frappe.session.user),
             "PurchaseInvoice": frappe.has_permission("Purchase Invoice", "read", user=frappe.session.user),
             "PurchaseReceipt": frappe.has_permission("Purchase Receipt", "read", user=frappe.session.user),
+            "MaterialRequest": frappe.has_permission("Material Request", "read", user=frappe.session.user),
+            "PaymentEntry": frappe.has_permission("Payment Entry", "read", user=frappe.session.user),
         }
 
         return {
@@ -493,6 +529,8 @@ def get_po_summary_data(po_name):
             "pi_list": pi_list,
             "pr_list": pr_list,
             "outstanding_details": outstanding_details,
+            "mr_list": mr_list, # NEW
+            "pe_list": pe_list, # NEW
             "total_pr_amount": total_pr_amount_gross,
             "total_pi_amount": total_pi_amount,
             "total_pr_qty": total_pr_qty,
