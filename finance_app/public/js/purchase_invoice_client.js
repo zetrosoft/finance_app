@@ -3,10 +3,8 @@ function add_info_sumber_button(frm, po_name) {
     // Find the section header
     let section_header = $('[data-fieldname="billing_details_section"] .section-head');
     
-    // Prevent duplicate buttons on refresh
-    if (section_header.find('.btn-info-sumber').length > 0) {
-        return;
-    }
+    // Explicitly remove any existing button to ensure fresh closure
+    section_header.find('.btn-info-sumber').remove();
 
     // Create and append the button
     let info_button = $(`
@@ -64,8 +62,10 @@ function format_summary_for_dialog(data) {
     let po_details = data.po_details;
     let pi_list = data.pi_list;
     let pr_list = data.pr_list;
-    let mr_list = data.mr_list; // NEW
+    let mr_list = data.mr_list;
+    let po_items = data.po_items || [];
     let pe_list = data.pe_list; // NEW
+    let total_pe_amount = data.total_pe_amount; // NEW
     let outstanding_details = data.outstanding_details;
     let total_pr_amount = data.total_pr_amount;
     let total_pi_amount = data.total_pi_amount;
@@ -73,7 +73,6 @@ function format_summary_for_dialog(data) {
     let currency = po_details.currency;
     let user_permissions = data.user_permissions || {};
 
-    // Helper to create clickable link if permission exists
     const createLink = (doctype, name, has_permission) => {
         if (has_permission && name) {
             return `<a href="/app/${frappe.router.slug(doctype)}/${name}" target="_blank">${name}</a>`;
@@ -81,26 +80,83 @@ function format_summary_for_dialog(data) {
         return name || '';
     };
 
+    // Calculate Tax
+    let tax_amount = po_details.grand_total - po_details.net_total;
+
     // PO Details HTML
     let po_html = `
         <h4>Detail Purchase Order</h4>
-        <table class="table table-bordered table-sm">
+        <table class="table table-bordered table-sm" style="margin-bottom: 0;">
             <tbody>
                 <tr>
-                    <td style="width: 30%;">No. Purchase Order</td>
-                    <td>${createLink('Purchase Order', po_details.name, user_permissions.PurchaseOrder)}</td>
+                    <td style="width: 15%;">No. PO</td>
+                    <td style="width: 35%;">${createLink('Purchase Order', po_details.name, user_permissions.PurchaseOrder)}</td>
+                    <td style="width: 15%;">Tanggal PO</td>
+                    <td style="width: 35%;">${po_details.transaction_date ? frappe.datetime.str_to_user(po_details.transaction_date) : ''}</td>
                 </tr>
-                <tr><td>Total Kuantitas</td><td>${po_details.total_qty}</td></tr>
-                <tr><td>Nilai Net (Sebelum Pajak)</td><td>${frappe.format(po_details.net_total, {fieldtype: 'Currency', currency: currency})}</td></tr>
-                <tr><td>Nilai Bruto (Termasuk Pajak)</td><td>${frappe.format(po_details.grand_total, {fieldtype: 'Currency', currency: currency})}</td></tr>
+                <tr>
+                    <td>Total Kuantitas</td>
+                    <td colspan="3">${po_details.total_qty_str || ''}</td>
+                </tr>
+                <tr>
+                    <td>Total Net</td>
+                    <td>${frappe.format(po_details.net_total, {fieldtype: 'Currency', currency: currency})}</td>
+                    <td>Total Pajak</td>
+                    <td>${frappe.format(tax_amount, {fieldtype: 'Currency', currency: currency})}</td>
+                </tr>
+                 <tr>
+                    <td>Total Bruto</td>
+                    <td colspan="3" style="font-weight: bold;">${frappe.format(po_details.grand_total, {fieldtype: 'Currency', currency: currency})}</td>
+                </tr>
             </tbody>
         </table>
     `;
 
+    // PO Items HTML (Collapsible) - Moved
+    let items_html = '';
+    if (po_items.length > 0) {
+        items_html = `
+            <p class="mb-2 mt-2">
+                <a class="btn btn-secondary btn-xs" data-toggle="collapse" data-target="#poItemsCollapse" role="button" aria-expanded="false" aria-controls="poItemsCollapse">
+                    View Items
+                </a>
+            </p>
+            <div class="collapse" id="poItemsCollapse">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Kode Item</th>
+                            <th>Nama Item</th>
+                            <th>Tgl. Kirim</th>
+                            <th style="text-align: right;">Qty</th>
+                            <th>UOM</th>
+                            <th style="text-align: right;">Rate</th>
+                            <th style="text-align: right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${po_items.map(item => `
+                            <tr>
+                                <td>${item.item_code}</td>
+                                <td>${item.item_name}</td>
+                                <td>${item.delivery_date ? frappe.datetime.str_to_user(item.delivery_date) : ''}</td>
+                                <td style="text-align: right;">${item.qty}</td>
+                                <td>${item.uom}</td>
+                                <td style="text-align: right;">${frappe.format(item.rate, {fieldtype: 'Currency', currency: currency})}</td>
+                                <td style="text-align: right;">${frappe.format(item.amount, {fieldtype: 'Currency', currency: currency})}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
     // Payment Schedule HTML
+    let payment_schedule_html = '';
     if (po_details.payment_schedule && po_details.payment_schedule.length > 0) {
-        po_html += '<h5>Jadwal Pembayaran</h5>';
-        po_html += `
+        payment_schedule_html += '<h5 class="mt-3">Jadwal Pembayaran</h5>';
+        payment_schedule_html += `
             <table class="table table-bordered table-sm">
                 <thead><tr><th>Termin</th><th>Basis Invoice</th><th>Jatuh Tempo</th><th style="text-align: right;">Porsi</th><th style="text-align: right;">Nilai</th></tr></thead>
                 <tbody>
@@ -118,8 +174,8 @@ function format_summary_for_dialog(data) {
         `;
     }
 
-    // --- NEW: Material Request List HTML ---
-    let mr_html = '<h4>Riwayat Material Request</h4>';
+    // Material Request List HTML
+    let mr_html = '<h4 class="mt-3">Riwayat Material Request</h4>';
     if (mr_list && mr_list.length > 0) {
         mr_html += `
             <table class="table table-bordered table-sm">
@@ -135,7 +191,7 @@ function format_summary_for_dialog(data) {
                         <tr>
                             <td>${createLink('Material Request', mr.name, user_permissions.MaterialRequest)}</td>
                             <td>${frappe.datetime.str_to_user(mr.transaction_date)}</td>
-                            <td style="text-align: right;">${mr.total_quantity}</td>
+                            <td style="text-align: right;">${mr.total_quantity_str || ''}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -214,7 +270,7 @@ function format_summary_for_dialog(data) {
         pr_html += '<p>Belum ada Purchase Receipt yang dibuat untuk PO ini.</p>';
     }
 
-    // --- NEW: Payment Entry List HTML ---
+    // Payment Entry List HTML
     let pe_html = '<h4>Riwayat Payment Entry</h4>';
     if (pe_list && pe_list.length > 0) {
         pe_html += `
@@ -237,6 +293,12 @@ function format_summary_for_dialog(data) {
                         </tr>
                     `).join('')}
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" style="text-align: right;"><b>Total Pembayaran</b></td>
+                        <td style="text-align: right;"><b>${frappe.format(total_pe_amount, {fieldtype: 'Currency', currency: currency})}</b></td>
+                    </tr>
+                </tfoot>
             </table>
         `;
     } else {
@@ -245,7 +307,7 @@ function format_summary_for_dialog(data) {
 
     // Outstanding HTML
     let outstanding_html = `
-        <h4>Informasi Outstanding</h4>
+        <h4 class="mt-3">Informasi Outstanding</h4>
         <table class="table table-bordered table-sm">
             <tbody>
                 <tr><td style="width: 30%;">Outstanding Kuantitas</td><td style="text-align: right;">${outstanding_details.outstanding_qty}</td></tr>
@@ -254,7 +316,7 @@ function format_summary_for_dialog(data) {
         </table>
     `;
 
-    return po_html + mr_html + pr_html + pi_html + pe_html + outstanding_html;
+    return po_html + items_html + payment_schedule_html + mr_html + pr_html + pi_html + pe_html + outstanding_html;
 }
 
 // Helper function to escape HTML for tooltips
@@ -455,7 +517,7 @@ function fetch_and_populate_billing_data(frm, po_name_arg, is_from_gr_arg) {
                         const term_detail = data.billing_details.find(d => d.no === 2);
                         if (term_detail) {
                             // The grand_total should now reflect the adjusted item quantities
-                            term_detail.total_amount = frm.doc.grand_total;
+                            term_detail.total_amount = frm.doc.net_total; // CORRECTED: Use net_total to show pre-tax amount
                         }
                     }
                     data.billing_details.forEach(function(row_data) {

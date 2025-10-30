@@ -220,13 +220,21 @@ class PurchaseInvoice(ERPNextPurchaseInvoice):
                     self.custom_payment_schedule_term = selected_term_from_po.name
                     self.remarks = (_("Invoice untuk Term Pembayaran: {0} (ID: {1})".format(selected_term_from_po.name, selected_term_from_po.name)) + "\\n" + (self.remarks or ""))
 
-                    for pi_term in self.payment_schedule:
-                        if pi_term.payment_term == selected_term_from_po.payment_term and pi_term.idx == selected_term_from_po.idx:
-                            pi_term.invoice_basis = selected_term_from_po.invoice_basis
-                            pi_term.status_invoice = selected_term_from_po.status_invoice
-                            pi_term.invoice_reference = self.name # <--- Corrected to self.name
-                            pi_term.related_delivery_id = selected_term_from_po.related_delivery_id
-                            break
+                for pi_term in self.payment_schedule:
+                    # Match by idx, as it's a reliable way to link terms
+                    if pi_term.idx == selected_term_from_po.idx:
+                        pi_term.payment_term = selected_term_from_po.payment_term # Explicitly set the payment_term string
+                        pi_term.invoice_basis = selected_term_from_po.invoice_basis
+                        pi_term.status_invoice = selected_term_from_po.status_invoice
+                        pi_term.invoice_reference = self.name
+                        pi_term.related_delivery_id = selected_term_from_po.related_delivery_id
+                        break
+
+                # Copy taxes from PO to PI, if they exist on PO and not on PI
+                if po_doc.get("taxes") and not self.get("taxes"):
+                    self.set("taxes", [])
+                    for tax in po_doc.taxes:
+                        self.append("taxes", tax.as_dict())
             
 @frappe.whitelist()
 def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
@@ -285,26 +293,28 @@ def get_billing_invoice_data(po_name, current_pi_name=None, is_from_gr=False):
             standard_term_amount = flt(po_doc.net_total * (flt(selected_term.invoice_portion) / 100))
             final_pi_amount = standard_term_amount # Default to standard amount
 
-            # Check if adjustment is needed based on GR value
-            total_gr_amount = frappe.db.sql("""
-                SELECT SUM(pri.amount) FROM `tabPurchase Receipt Item` pri
-                JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
-                WHERE pri.purchase_order = %(po_name)s AND pr.docstatus = 1
-            """, {"po_name": po_name}, as_list=True)[0][0] or 0
+            # Only apply adjustment logic for the LAST term
+            if is_last:
+                # Check if adjustment is needed based on GR value
+                total_gr_amount = frappe.db.sql("""
+                    SELECT SUM(pri.amount) FROM `tabPurchase Receipt Item` pri
+                    JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
+                    WHERE pri.purchase_order = %(po_name)s AND pr.docstatus = 1
+                """, {"po_name": po_name}, as_list=True)[0][0] or 0
 
-            # An adjustment is needed if some goods have been received, but not all of them
-            if 0 < total_gr_amount < po_doc.net_total:
-                total_previous_pi_amount = frappe.db.sql("""
-                    SELECT SUM(pii.amount) FROM `tabPurchase Invoice Item` pii
-                    JOIN `tabPurchase Invoice` pi ON pii.parent = pi.name
-                    WHERE pii.purchase_order = %(po_name)s AND pi.docstatus = 1 AND pi.name != %(current_pi_name)s
-                """, {"po_name": po_name, "current_pi_name": current_pi_name or ''})[0][0] or 0
-                
-                adjusted_amount = total_gr_amount - total_previous_pi_amount
-                
-                # The final amount is the lesser of the two, ensuring we don't over-invoice the term
-                final_pi_amount = min(adjusted_amount, standard_term_amount)
-                selected_term_description += _(" (Disesuaikan dengan GR)")
+                # An adjustment is needed if some goods have been received, but not all of them
+                if 0 < total_gr_amount < po_doc.net_total:
+                    total_previous_pi_amount = frappe.db.sql("""
+                        SELECT SUM(pii.amount) FROM `tabPurchase Invoice Item` pii
+                        JOIN `tabPurchase Invoice` pi ON pii.parent = pi.name
+                        WHERE pii.purchase_order = %(po_name)s AND pi.docstatus = 1 AND pi.name != %(current_pi_name)s
+                    """, {"po_name": po_name, "current_pi_name": current_pi_name or ''})[0][0] or 0
+                    
+                    adjusted_amount = total_gr_amount - total_previous_pi_amount
+                    
+                    # The final amount is the lesser of the two, ensuring we don't over-invoice the term
+                    final_pi_amount = min(adjusted_amount, standard_term_amount)
+                    selected_term_description += _(" (Disesuaikan dengan GR)")
 
         selected_term_payment_amount = final_pi_amount
 
@@ -433,9 +443,20 @@ def get_po_summary_data(po_name):
                 "due_date": term.due_date,
             })
 
+        # Calculate total PO quantity grouped by UOM
+        po_qty_by_uom = frappe.db.sql("""
+            SELECT SUM(qty), uom
+            FROM `tabPurchase Order Item`
+            WHERE parent = %(po_name)s
+            GROUP BY uom
+        """, {"po_name": po_name}, as_list=1)
+
+        po_total_qty_str = ", ".join([f"{flt(row[0])} {row[1]}" for row in po_qty_by_uom if row[0] is not None]) or "0"
+
         po_details = {
             "name": po.name,
-            "total_qty": po.total_qty,
+            "transaction_date": po.transaction_date, # Added field
+            "total_qty_str": po_total_qty_str, # Using new formatted string
             "net_total": po.net_total,
             "grand_total": po.grand_total,
             "currency": po.currency,
@@ -488,17 +509,42 @@ def get_po_summary_data(po_name):
             WHERE parent = %(po_name)s AND material_request IS NOT NULL
         """, {"po_name": po_name})
 
+        # Get item codes from the PO to filter MR items
+        po_item_codes = [item.item_code for item in po.items]
+
+        # 5. Material Request (MR) List - NEW
+        mr_names = frappe.db.sql_list("""
+            SELECT DISTINCT material_request
+            FROM `tabPurchase Order Item`
+            WHERE parent = %(po_name)s AND material_request IS NOT NULL
+        """, {"po_name": po_name})
+
         mr_list = []
         if mr_names:
-            mr_list = frappe.get_all(
+            mr_basic_data = frappe.get_all(
                 "Material Request",
                 filters={"name": ["in", mr_names]},
-                fields=["name", "transaction_date", "total_quantity"]
+                fields=["name", "transaction_date"]
             )
+            # For each MR, calculate the total quantity from its items, filtered by PO items and grouped by UOM
+            for mr in mr_basic_data:
+                qty_by_uom = frappe.db.sql("""
+                    SELECT SUM(qty), uom
+                    FROM `tabMaterial Request Item`
+                    WHERE parent = %(parent)s AND item_code IN %(item_codes)s
+                    GROUP BY uom
+                """, {"parent": mr.name, "item_codes": po_item_codes}, as_list=1)
+
+                if qty_by_uom:
+                    mr['total_quantity_str'] = ", ".join([f"{flt(row[0])} {row[1]}" for row in qty_by_uom if row[0] is not None])
+                else:
+                    mr['total_quantity_str'] = "0"
+            mr_list = mr_basic_data
 
         # 6. Payment Entry (PE) List - NEW
         pi_names = [pi.get('name') for pi in pi_list]
         pe_list = []
+        total_pe_amount = 0  # Initialize total
         if pi_names:
             pe_names = frappe.db.sql_list("""
                 SELECT DISTINCT parent
@@ -514,6 +560,20 @@ def get_po_summary_data(po_name):
                     filters={"name": ["in", pe_names]},
                     fields=["name", "posting_date", "paid_amount", "mode_of_payment"]
                 )
+                total_pe_amount = sum(pe.get('paid_amount', 0) for pe in pe_list)
+
+        # 5.5. Extract PO items
+        po_items_list = []
+        for item in po.items:
+            po_items_list.append({
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "delivery_date": item.schedule_date,
+                "qty": item.qty,
+                "uom": item.uom,
+                "rate": item.rate,
+                "amount": item.amount
+            })
 
         # 7. Add permission checks for linking
         user_permissions = {
@@ -526,11 +586,13 @@ def get_po_summary_data(po_name):
 
         return {
             "po_details": po_details,
+            "po_items": po_items_list,
             "pi_list": pi_list,
             "pr_list": pr_list,
             "outstanding_details": outstanding_details,
             "mr_list": mr_list, # NEW
             "pe_list": pe_list, # NEW
+            "total_pe_amount": total_pe_amount,
             "total_pr_amount": total_pr_amount_gross,
             "total_pi_amount": total_pi_amount,
             "total_pr_qty": total_pr_qty,

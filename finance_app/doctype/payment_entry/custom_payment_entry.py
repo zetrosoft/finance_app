@@ -1,7 +1,10 @@
 import frappe
 from frappe import _
 from frappe.utils import flt, cint
-
+#from frappe.utils.data import get_field_precision 
+# ATAU jika ini tidak berhasil, coba:
+from frappe.model.meta import get_field_precision 
+# (Namun, frappe.utils.data adalah lokasi yang lebih umum di versi modern)
 # Import the original PaymentEntry class from ERPNext
 from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry as ERPNextPaymentEntry
 
@@ -88,7 +91,6 @@ def get_payment_entry(dt, dn, party_amount=None, bank_account=None, bank_amount=
 
 
 class CustomPaymentEntry(ERPNextPaymentEntry):
-
     # --- KOREKSI VALIDASI ALOKASI (Nomor 2) ---
     def validate_allocated_amount_with_latest_data(self):
         # Cek apakah Payment Entry ini dibuat untuk Purchase Invoice
@@ -106,48 +108,159 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
         super().validate_allocated_amount_with_latest_data()
     # --- END KOREKSI VALIDASI ALOKASI ---
 
+
+
     # Metode yang berfungsi menonaktifkan alokasi berbasis termin untuk PI
     def term_based_allocation_enabled_for_reference(self, reference_doctype: str, reference_name: str) -> bool:
         if reference_doctype == "Purchase Invoice":
             return False
         return super().term_based_allocation_enabled_for_reference(reference_doctype, reference_name)
 
+    def update_payment_schedule(self, cancel=0):
+        is_pi_payment = any(ref.reference_doctype == "Purchase Invoice" for ref in self.get("references"))
+
+        if is_pi_payment:
+            # Replicate original update_payment_schedule logic, but remove the problematic frappe.throw
+            invoice_payment_amount_map = {}
+            invoice_paid_amount_map = {}
+
+            for ref in self.get("references"):
+                if not ref.payment_term or not ref.reference_name:
+                    continue
+
+                key = (ref.payment_term, ref.reference_name, ref.reference_doctype)
+                invoice_payment_amount_map.setdefault(key, 0.0)
+                invoice_payment_amount_map[key] += ref.allocated_amount
+
+                if not invoice_paid_amount_map.get(key):
+                    payment_schedule = frappe.get_all(
+                        "Payment Schedule",
+                        filters={"parent": ref.reference_name},
+                        fields=[
+                            "paid_amount",
+                            "payment_amount",
+                            "payment_term",
+                            "discount",
+                            "outstanding",
+                            "discount_type",
+                        ],
+                    )
+                    for term in payment_schedule:
+                        invoice_key = (term.payment_term, ref.reference_name, ref.reference_doctype)
+                        invoice_paid_amount_map.setdefault(invoice_key, {})
+                        invoice_paid_amount_map[invoice_key]["outstanding"] = term.outstanding
+                        if not (term.discount_type and term.discount):
+                            continue
+
+                        if term.discount_type == "Percentage":
+                            invoice_paid_amount_map[invoice_key]["discounted_amt"] = ref.total_amount * (
+                                term.discount / 100
+                            )
+                        else:
+                            invoice_paid_amount_map[invoice_key]["discounted_amt"] = term.discount
+
+            for idx, (key, allocated_amount) in enumerate(invoice_payment_amount_map.items(), 1):
+                if not invoice_paid_amount_map.get(key):
+                    frappe.throw(_("Payment term {0} not used in {1}").format(key[0], key[1]))
+
+                allocated_amount = self.get_allocated_amount_in_transaction_currency(
+                    allocated_amount, key[2], key[1]
+                )
+
+                outstanding = flt(invoice_paid_amount_map.get(key, {}).get("outstanding"))
+                discounted_amt = flt(invoice_paid_amount_map.get(key, {}).get("discounted_amt"))
+
+                conversion_rate = frappe.db.get_value(key[2], {"name": key[1]}, "conversion_rate")
+                base_paid_amount_precision = get_field_precision(
+                    frappe.get_meta("Payment Schedule").get_field("base_paid_amount")
+                )
+                base_outstanding_precision = get_field_precision(
+                    frappe.get_meta("Payment Schedule").get_field("base_outstanding")
+                )
+
+                base_paid_amount = flt(
+                    (allocated_amount - discounted_amt) * conversion_rate, base_paid_amount_precision
+                )
+                base_outstanding = flt(allocated_amount * conversion_rate, base_outstanding_precision)
+
+                if cancel:
+                    frappe.db.sql(
+                        """
+                        UPDATE `tabPayment Schedule`
+                        SET
+                            paid_amount = `paid_amount` - %s,
+                            base_paid_amount = `base_paid_amount` - %s,
+                            discounted_amount = `discounted_amount` - %s,
+                            outstanding = `outstanding` + %s,
+                            base_outstanding = `base_outstanding` - %s
+                        WHERE parent = %s and payment_term = %s""",
+                        (
+                            allocated_amount - discounted_amt,
+                            base_paid_amount,
+                            discounted_amt,
+                            allocated_amount,
+                            base_outstanding,
+                            key[1],
+                            key[0],
+                        ),
+                    )
+                else:
+                    # REMOVED: if allocated_amount > outstanding: frappe.throw(...)
+
+                    if allocated_amount and outstanding:
+                        frappe.db.sql(
+                            """
+                            UPDATE `tabPayment Schedule`
+                            SET
+                                paid_amount = `paid_amount` + %s,
+                                base_paid_amount = `base_paid_amount` + %s,
+                                discounted_amount = `discounted_amount` + %s,
+                                outstanding = `outstanding` - %s,
+                                base_outstanding = `base_outstanding` - %s
+                            WHERE parent = %s and payment_term = %s""",
+                            (
+                                allocated_amount - discounted_amt,
+                                base_paid_amount,
+                                discounted_amt,
+                                allocated_amount,
+                                base_outstanding,
+                                key[1],
+                                key[0],
+                            ),
+                        )
+        else:
+            # For non-PI payments, use the original method
+            super(CustomPaymentEntry, self).update_payment_schedule(cancel)
+
     # --- KOREKSI ATTRIBUTEERROR (Nomor 3) ---
     def before_insert(self):
-        #frappe.log_error(f"DEBUG: Payment Entry before_insert - Document State: {self.as_dict()}", "Payment Entry Debug")
-        # Hapus panggilan super().before_insert() untuk menghindari AttributeError
-        pass
-    # --- END KOREKSI ATTRIBUTEERROR ---
-    
-    # Metode lainnya tetap dipertahankan
-    
-    def get_current_tax_amount(self, tax):
-        tax_rate = tax.rate
+        def get_current_tax_amount(self, tax):
+            tax_rate = tax.rate
 
-        if tax.charge_type in ["On Previous Row Amount", "On Previous Row Total"]:
-            if tax.idx == 1:
-                frappe.throw(
-                    _("Cannot select charge type as 'On Previous Row Amount' or 'On Previous Row Total' for first row")
-                )
-            if not tax.row_id:
-                tax.row_id = tax.idx - 1
+            if tax.charge_type in ["On Previous Row Amount", "On Previous Row Total"]:
+                if tax.idx == 1:
+                    frappe.throw(
+                        _("Cannot select charge type as 'On Previous Row Amount' or 'On Previous Row Total' for first row")
+                    )
+                if not tax.row_id:
+                    tax.row_id = tax.idx - 1
 
-        current_tax_amount = 0.0 
-
-        if tax.charge_type == "Actual":
-            current_tax_amount = flt(tax.tax_amount, self.precision("tax_amount", tax))
-        elif tax.charge_type == "On Paid Amount":
-            current_tax_amount = (tax_rate / 100.0) * self.paid_amount_after_tax
-        elif tax.charge_type == "On Net Total": 
-            current_tax_amount = (tax_rate / 100.0) * self.paid_amount_after_tax
-        elif tax.charge_type == "On Previous Row Amount":
-            current_tax_amount = (tax_rate / 100.0) * self.get("taxes")[cint(tax.row_id) - 1].tax_amount
-        elif tax.charge_type == "On Previous Row Total":
-            current_tax_amount = (tax_rate / 100.0) * self.get("taxes")[cint(tax.row_id) - 1].total
-        else:
             current_tax_amount = 0.0 
 
-        return current_tax_amount
+            if tax.charge_type == "Actual":
+                current_tax_amount = flt(tax.tax_amount, self.precision("tax_amount", tax))
+            elif tax.charge_type == "On Paid Amount":
+                current_tax_amount = (tax_rate / 100.0) * self.paid_amount_after_tax
+            elif tax.charge_type == "On Net Total": 
+                current_tax_amount = (tax_rate / 100.0) * self.paid_amount_after_tax
+            elif tax.charge_type == "On Previous Row Amount":
+                current_tax_amount = (tax_rate / 100.0) * self.get("taxes")[cint(tax.row_id) - 1].tax_amount
+            elif tax.charge_type == "On Previous Row Total":
+                current_tax_amount = (tax_rate / 100.0) * self.get("taxes")[cint(tax.row_id) - 1].total
+            else:
+                current_tax_amount = 0.0 
+
+            return current_tax_amount
 
     def calculate_taxes(self):
         original_actual_taxes = {}
