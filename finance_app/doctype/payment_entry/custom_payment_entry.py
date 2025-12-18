@@ -116,6 +116,21 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
             return False
         return super().term_based_allocation_enabled_for_reference(reference_doctype, reference_name)
 
+    def get_valid_reference_doctypes(self):
+        # Panggil metode asli dari parent class untuk mendapatkan daftar standar
+        valid_doctypes = super().get_valid_reference_doctypes()
+
+        # Jika party_type adalah Employee, tambahkan 'Expense Claim' ke daftar
+        if self.party_type == "Employee":
+            # Konversi tuple ke list agar bisa dimodifikasi
+            valid_doctypes = list(valid_doctypes)
+            
+            # Tambahkan 'Expense Claim' jika belum ada
+            if "Expense Claim" not in valid_doctypes:
+                valid_doctypes.append("Expense Claim")
+
+        return valid_doctypes
+
     def update_payment_schedule(self, cancel=0):
         is_pi_payment = any(ref.reference_doctype == "Purchase Invoice" for ref in self.get("references"))
 
@@ -322,6 +337,40 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
                 super().apply_taxes()
         else:
             super().apply_taxes()
+
+    def on_submit(self):
+        # HACK: The base `on_submit` method seems to require `reference_doctype`
+        # on the main doc. We'll temporarily set it from the first child table row
+        # to satisfy the parent method, and then remove it.
+        set_temp_fields = self.references and not hasattr(self, 'reference_doctype')
+
+        if set_temp_fields:
+            self.reference_doctype = self.references[0].reference_doctype
+            self.reference_name = self.references[0].reference_name
+
+        try:
+            # Call the standard on_submit which now should not fail
+            super().on_submit()
+        finally:
+            # Clean up the temporary fields
+            if set_temp_fields:
+                del self.reference_doctype
+                del self.reference_name
+
+        # LOGIKA UNTUK UPDATE STATUS EXPENSE CLAIM
+        for ref in self.references:
+            if ref.reference_doctype == "Expense Claim" and ref.reference_name:
+                try:
+                    expense_claim_doc = frappe.get_doc("Expense Claim", ref.reference_name)
+                    
+                    if hasattr(expense_claim_doc, "update_paid_status"):
+                        expense_claim_doc.update_paid_status()
+                        expense_claim_doc.save(ignore_permissions=True)
+                    else:
+                        frappe.db.set_value("Expense Claim", ref.reference_name, "status", "Paid")
+                    frappe.db.commit()
+                except Exception as e:
+                    frappe.log_error(f"Error updating Expense Claim status for {ref.reference_name}: {e}", "PE Override")
 
         
 @frappe.whitelist()
