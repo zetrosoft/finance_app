@@ -129,6 +129,10 @@ class CustomPaymentEntry(ERPNextPaymentEntry):
             if "Expense Claim" not in valid_doctypes:
                 valid_doctypes.append("Expense Claim")
 
+            # Tambahkan 'Advance Claim' jika belum ada
+            if "Employee Advance" not in valid_doctypes:
+                valid_doctypes.append("Employee Advance")
+        
         return valid_doctypes
 
     def update_payment_schedule(self, cancel=0):
